@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_DATABASE: beauty_alarm
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_USER: beauty_user
+      MYSQL_PASSWORD: beautypassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=mysql+mysqldb://beauty_user:beautypassword@db:3306/beauty_alarm
+    depends_on:
+      - db
+    volumes:
+      - ./backend:/app
+
+volumes:
+  db_data:
