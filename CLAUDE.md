@@ -10,9 +10,9 @@ an installable Vue PWA on the phone, Cloudflare Tunnel between them. See
 
 ## Current state (2026-09-21)
 
-All seven phases in [PLAN.md](PLAN.md) are complete on branch
-`claude/relaxed-dirac-9acm9t`. The backend, the PWA, Web Push, the progress
-view, the Docker stack and CI all exist.
+All seven phases in [PLAN.md](PLAN.md) are complete and merged to `main`. The
+backend, the PWA, Web Push, the progress view, the Docker stack and CI all
+exist.
 
 **Proven:** 52 backend tests, 19 frontend tests, `vue-tsc` and `vite build`
 clean. The built PWA was driven in a headless browser against a live API —
