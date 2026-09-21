@@ -1,76 +1,35 @@
-from fastapi import FastAPI, Depends, HTTPException
+import logging
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
-from typing import List
-from . import models, schemas
-from .database import get_db
+
+from .config import get_settings
+from .routers import health, logs, products, routines, stats
+
+settings = get_settings()
 
 app = FastAPI(title="Beauty Routine Tracker API")
 
-# Allow the Flutter web dev server (any localhost port) to call the API
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if not settings.auth_enabled:
+    logging.getLogger("uvicorn.error").warning(
+        "API_TOKEN is not set: every endpoint is unauthenticated. Set it before "
+        "exposing this API through the tunnel (specs.md D5)."
+    )
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Beauty Routine Tracker API"}
+# Origins come from configuration (specs.md section 9). The mobile app does not
+# need CORS at all; this is for the Flutter web dev server, which sets the regex
+# in docker-compose.override.yml.
+if settings.cors_origin_list or settings.cors_origin_regex:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origin_list,
+        allow_origin_regex=settings.cors_origin_regex or None,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# Health
-# Unauthenticated by design (specs.md section 6) so the container healthcheck
-# and the tunnel can probe it without a token.
-@app.get("/healthz")
-def healthz(db: Session = Depends(get_db)):
-    try:
-        db.execute(text("SELECT 1"))
-    except SQLAlchemyError:
-        return JSONResponse(
-            status_code=503,
-            content={"status": "degraded", "database": "unreachable"},
-        )
-    return {"status": "ok", "database": "ok"}
-
-# Products
-@app.post("/products/", response_model=schemas.Product)
-def create_product(product: schemas.ProductCreate, db: Session = Depends(get_db)):
-    db_product = models.Product(**product.model_dump())
-    db.add(db_product)
-    db.commit()
-    db.refresh(db_product)
-    return db_product
-
-@app.get("/products/", response_model=List[schemas.Product])
-def read_products(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return db.query(models.Product).offset(skip).limit(limit).all()
-
-# Routines
-@app.post("/routines/", response_model=schemas.Routine)
-def create_routine(routine: schemas.RoutineCreate, db: Session = Depends(get_db)):
-    db_routine = models.Routine(**routine.model_dump())
-    db.add(db_routine)
-    db.commit()
-    db.refresh(db_routine)
-    return db_routine
-
-@app.get("/routines/", response_model=List[schemas.Routine])
-def read_routines(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return db.query(models.Routine).offset(skip).limit(limit).all()
-
-# Daily Logs
-@app.post("/logs/", response_model=schemas.DailyLog)
-def create_log(log: schemas.DailyLogCreate, db: Session = Depends(get_db)):
-    db_log = models.DailyLog(**log.model_dump())
-    db.add(db_log)
-    db.commit()
-    db.refresh(db_log)
-    return db_log
-
-@app.get("/logs/", response_model=List[schemas.DailyLog])
-def read_logs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return db.query(models.DailyLog).offset(skip).limit(limit).all()
+app.include_router(health.router)
+app.include_router(products.router)
+app.include_router(routines.router)
+app.include_router(logs.router)
+app.include_router(stats.router)

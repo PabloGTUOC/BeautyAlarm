@@ -14,3 +14,6 @@ venv/
 # Environment files
 .env
 .env.*
+
+# Python test artifacts
+.pytest_cache/
