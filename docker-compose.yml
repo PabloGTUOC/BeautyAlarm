@@ -1,17 +1,21 @@
 # Production-shaped stack. `docker compose up` also applies
-# docker-compose.override.yml (hot reload, source mount, published DB port);
+# docker-compose.override.yml (hot reload, source mounts, published ports);
 # run `docker compose -f docker-compose.yml up` to exclude it.
+#
+# Values come from .env — copy .env.example and change them before exposing this
+# to anything. The defaults below only exist so a fresh clone boots.
 services:
   db:
     image: mysql:8.0
     restart: always
     environment:
-      MYSQL_DATABASE: beauty_alarm
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_USER: beauty_user
-      MYSQL_PASSWORD: beautypassword
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-beauty_alarm}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-me-root}
+      MYSQL_USER: ${MYSQL_USER:-beauty_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
     volumes:
-      - db_data:/var/lib/mysql
+      # Point DB_DATA_PATH at NAS storage in .env (specs.md section 8).
+      - ${DB_DATA_PATH:-./data/mysql}:/var/lib/mysql
     healthcheck:
       # 127.0.0.1 rather than localhost: during initialisation MySQL runs a
       # temporary socket-only server, and a socket ping would report healthy
@@ -25,14 +29,33 @@ services:
   api:
     build: ./backend
     restart: always
-    ports:
-      - "8000:8000"
     environment:
-      - DATABASE_URL=mysql+mysqldb://beauty_user:beautypassword@db:3306/beauty_alarm
-      - APP_TIMEZONE=Europe/Madrid
+      DATABASE_URL: mysql+mysqldb://${MYSQL_USER:-beauty_user}:${MYSQL_PASSWORD:-change-me}@db:3306/${MYSQL_DATABASE:-beauty_alarm}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Madrid}
+      API_TOKEN: ${API_TOKEN:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}
     depends_on:
       db:
         condition: service_healthy
 
-volumes:
-  db_data:
+  web:
+    build: ./frontend
+    restart: always
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+  # Started only with `docker compose --profile tunnel up`, so the stack does not
+  # crash-loop on a missing token when running locally.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: always
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - web
+    profiles: ["tunnel"]

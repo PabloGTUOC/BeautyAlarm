@@ -11,168 +11,138 @@ and referenced from commit messages and [CLAUDE.md](CLAUDE.md).
 |---|---|---|---|
 | 0 | Lock the spec | S1–S14 | ✅ Done |
 | 1 | Make it boot | G1, G19, G21 | ✅ Done† |
-| 2 | Backend data model and API | G8, G12–G16 | ⬜ Not started |
-| 3 | Frontend catches up | G3, G5, G6, G9, G10, G11, G23 | ⬜ Not started |
-| 4 | Notifications | G2, G4 | ⬜ Not started |
-| 5 | Progress view | G7 | ⬜ Not started |
-| 6 | Infra hardening | G17, G18, G20 | ⬜ Not started |
-| 7 | Tests and CI | G22 | ⬜ Not started |
+| 2 | Backend data model and API | G8, G12–G16 | ✅ Done |
+| 3 | Vue PWA client | G3, G5, G6, G9, G10, G11, G23, G24, G26 | ✅ Done |
+| 4 | Web Push notifications | G2, G25 | ✅ Done‡ |
+| 5 | Progress view | G7 | ✅ Done |
+| 6 | Infra hardening | G17, G18, G20, G27 | ✅ Done† |
+| 7 | Tests and CI | G22 | ✅ Done |
 
-† Code complete and locally verified; the containerised run is still unproven —
-see Phase 1 below and the session log in [CLAUDE.md](CLAUDE.md).
+† The containerised stack has never been built or run: Docker Hub is blocked by
+the development environment's egress policy. Both compose files validate with
+`docker compose config`, and everything inside them was exercised directly, but
+the images themselves are unproven. See [CLAUDE.md](CLAUDE.md).
+
+‡ Delivery to a real browser push service is unproven for the same reason — no
+public endpoint was reachable. The selection logic, subscription storage and
+endpoint behaviour are covered by tests.
+
+**Open gaps: G28, G29.** Everything else is closed or obsolete.
 
 ## Gap register
 
-Gaps found reviewing the code against the original brief (2026-09-21). The
-spec-level gaps (S-series) were resolved in Phase 0 and are recorded as
-decisions D1–D8 in [specs.md](specs.md).
+Gaps found reviewing the code against the original brief (2026-09-21), plus
+those discovered while building. Spec-level gaps (S-series) were resolved in
+Phase 0 as decisions D1–D10 in [specs.md](specs.md).
 
-### Blockers — the stack does not work without these
+The client moved from Flutter to a Vue PWA partway through (D1a), which closed
+some gaps by deletion and made one obsolete.
 
-| ID | Gap | Location | Status |
-|---|---|---|---|
-| G1 | Tables are never created: no `alembic upgrade`, no `create_all`, no entrypoint | `backend/Dockerfile`, `docker-compose.yml` | ✅ Phase 1 |
-| G2 | No notification code at all — package declared, never imported | `frontend/lib/**` | ⬜ Phase 4 |
-| G3 | API base URL hardcoded to `127.0.0.1`, unreachable from emulator or device | `frontend/lib/services/api_service.dart` | ⬜ Phase 3 |
-| G4 | `INTERNET` permission only in the debug manifest; release builds cannot reach the API | `frontend/android/app/src/main/AndroidManifest.xml` | ⬜ Phase 4 |
+### Blockers
+
+| ID | Gap | Status |
+|---|---|---|
+| G1 | Tables never created: no `alembic upgrade`, no `create_all`, no entrypoint | ✅ Phase 1 — `backend/entrypoint.sh` migrates, then execs the server |
+| G2 | No notification code at all | ✅ Phase 4 — Web Push end to end (D1b) |
+| G3 | API base URL hardcoded to `127.0.0.1` | ✅ Phase 3 — same-origin `/api` behind nginx and the Vite proxy (D9) |
+| G4 | `INTERNET` permission only in the Android debug manifest | ⬛ Obsolete — there is no Android app |
 
 ### Promised in the spec, missing in code
 
-| ID | Gap | Location | Status |
-|---|---|---|---|
-| G5 | No day-of-week filtering — "Today's Routine" shows every routine every day | `frontend/lib/screens/home_screen.dart` | ⬜ Phase 3 |
-| G6 | Completion state is local and ephemeral; resets on every rebuild | `frontend/lib/widgets/routine_card.dart` | ⬜ Phase 3 |
-| G7 | No calendar or streak view | — | ⬜ Phase 5 |
-| G8 | No PUT/PATCH/DELETE on any resource; delete button is a `// TODO` | `backend/app/main.py`, `frontend/lib/screens/manage_routines_screen.dart` | ⬜ Phase 2 |
-| G9 | `notification_time` never set by the UI; days hardcoded to `[1..7]` | `frontend/lib/screens/add_routine_screen.dart` | ⬜ Phase 3 |
-| G10 | Every routine creates a new product — duplicates accumulate | `frontend/lib/providers/routine_provider.dart` | ⬜ Phase 3 |
-| G11 | No skip action anywhere | — | ⬜ Phase 3 |
+| ID | Gap | Status |
+|---|---|---|
+| G5 | No day-of-week filtering — "Today's Routine" showed everything every day | ✅ Phase 3 — the view is driven by `GET /routines/today` |
+| G6 | Completion state local and ephemeral | ✅ Phase 3 — hydrated from the API; verified to survive a reload |
+| G7 | No calendar or streak view | ✅ Phase 5 — heatmap, streak tiles, 30-day adherence |
+| G8 | No PUT/PATCH/DELETE; delete button was a `// TODO` | ✅ Phase 2 |
+| G9 | `notification_time` never set by the UI; days hardcoded to `[1..7]` | ✅ Phase 3 — weekday chips and a time picker |
+| G10 | Every routine created a new product | ✅ Phase 3 — `findOrCreateProduct` matches on name and brand |
+| G11 | No skip action | ✅ Phase 3 |
 
 ### Correctness and safety
 
 | ID | Gap | Status |
 |---|---|---|
-| G12 | Almost every column nullable; no validation on `days_of_week` values or `notification_time` format | ⬜ Phase 2 |
-| G13 | Bad `product_id` returns a 500 `IntegrityError` instead of 404 | ⬜ Phase 2 |
-| G14 | No unique constraint on (routine, day) → duplicate logs | ⬜ Phase 2 |
-| G15 | No authentication, on an API the spec puts on the public internet | ⬜ Phase 2 |
-| G16 | CORS accepts any localhost port — dev-only config with no production path | ⬜ Phase 2 |
+| G12 | Nullable columns everywhere; no validation of days or times | ✅ Phase 2 |
+| G13 | Bad `product_id` returned a 500 | ✅ Phase 2 — 404 |
+| G14 | No unique constraint on (routine, day) | ✅ Phase 2 — `uq_daily_logs_routine_date` |
+| G15 | No authentication | ✅ Phase 2 — bearer token (D5) |
+| G16 | CORS accepted any localhost port | ✅ Phase 2 — configuration-driven; production is same-origin |
 
 ### Infrastructure and quality
 
 | ID | Gap | Status |
 |---|---|---|
-| G17 | DB credentials hardcoded in compose; 3306 published to the host | 🚧 Phase 6 — the 3306 publish moved to the dev override in Phase 1, so it is gone from the production stack; the hardcoded credentials remain |
-| G18 | Named Docker volume rather than the NAS path the spec calls for; no backup | ⬜ Phase 6 |
-| G19 | No healthcheck — the API races MySQL on boot | ✅ Phase 1 |
-| G20 | No `cloudflared` service | ⬜ Phase 6 |
-| G21 | `--reload` baked into the production image CMD | ✅ Phase 1 |
-| G22 | `widget_test.dart` references a nonexistent `MyApp` and will not compile; no backend tests; no CI | ⬜ Phase 7 |
-| G23 | `getProducts()` is dead code; `getLogs()` is fetched but never read | ⬜ Phase 3 |
+| G17 | DB credentials hardcoded; 3306 published | ✅ Phase 6 — `.env`, and 3306 only in the dev override |
+| G18 | Named volume rather than NAS storage; no backup | ✅ Phase 6 — `DB_DATA_PATH` bind mount, `scripts/backup.sh` |
+| G19 | No healthcheck — the API raced MySQL | ✅ Phase 1 |
+| G20 | No `cloudflared` service | ✅ Phase 6 — behind the `tunnel` profile |
+| G21 | `--reload` in the production image | ✅ Phase 1 |
+| G22 | Stale `widget_test.dart`; no backend tests; no CI | ✅ Phase 7 — 52 backend + 19 frontend tests, GitHub Actions |
+| G23 | `getProducts()` dead, `getLogs()` unused | ✅ Phase 3 — deleted with the Flutter client |
+
+### Found while building
+
+| ID | Gap | Status |
+|---|---|---|
+| G24 | `frontend/` held a Flutter client after the move to a PWA (D1a) | ✅ Phase 3 — removed and replaced |
+| G25 | No push subscription storage, VAPID keys or scheduler | ✅ Phase 4 |
+| G26 | No web app manifest, service worker or icons | ✅ Phase 3 — `vite-plugin-pwa`, generated icons |
+| G27 | The built PWA had nothing serving it | ✅ Phase 6 — nginx image proxying `/api` (D9) |
+| **G28** | **Routines have no `start_date`**, so nothing distinguishes "did not exist yet" from "missed". The calendar treats days before the first log as unknown, which is right for a fresh install and wrong for a routine added later. | ⬜ **Open** — needs a `start_date` column, defaulted to the creation date |
+| **G29** | **No offline support.** The shell is precached so the app opens, but every screen needs the API: no cached checklist, no write queue. | ⬜ **Open** — D6's upsert semantics already make replay safe |
 
 ## Phases
 
 ### Phase 0 — Lock the spec ✅
+Rewrote `specs.md` around decisions D1–D8, later revised to D1a/D1b/D9/D10 when
+the client moved to a PWA. Created `PLAN.md`, `README.md` and `CLAUDE.md`.
 
-Rewrite `specs.md` around decisions D1–D8: notification architecture, weekday
-convention, timezone and local-date rule, log semantics, streak definition,
-auth model, product/treatment unification, lifecycle fields. Add explicit
-non-goals. Every later phase cites it.
+### Phase 1 — Make it boot ✅ *(G1, G19, G21)*
+`entrypoint.sh` runs `alembic upgrade head` before exec'ing the server, with a
+bounded retry. MySQL healthcheck plus `depends_on: condition: service_healthy`.
+`--reload` moved out of the image. `GET /healthz` reports database reachability.
 
-**Exit criterion:** no open architectural question blocks an implementation phase.
+### Phase 2 — Backend data model and API ✅ *(G8, G12–G16)*
+Migration `b2f1c4d7e9a3`: NOT NULL columns, `log_date` with its unique
+constraint, lifecycle fields, soft delete, reserved `user_id`, `TIME` for
+`notification_time`, FK `ON DELETE` rules. Full CRUD, log upsert,
+`/routines/today`, `/logs/calendar`, `/stats/streak`, `/stats/adherence`.
+Bearer-token auth and configuration-driven CORS.
 
-### Phase 1 — Make it boot ✅
+### Phase 3 — Vue PWA client ✅ *(G3, G5, G6, G9–G11, G23, G24, G26)*
+Vue 3 + Vite + Pinia + vue-router, installable, with generated icons and a
+service worker. Today checklist driven by `/routines/today` with done/skip/undo,
+routine list and editor with weekday chips and a time picker, product reuse,
+settings for the API token.
 
-*Closes G1, G19, G21.*
+### Phase 4 — Web Push ✅ *(G2, G25)*
+Migration `c7d3e81f5b20` adds `push_subscriptions`. `app/push.py` sends via
+pywebpush and prunes dead endpoints on 404/410. `app/scheduler.py` runs an
+asyncio loop in the API process (D10), acting once per local minute and skipping
+routines already logged today. Client subscribes from Settings; `public/push-sw.js`
+displays and focuses.
 
-* `backend/entrypoint.sh` runs `alembic upgrade head`, then execs the server.
-* Dockerfile drops `--reload`; dev overrides move to `docker-compose.override.yml`.
-* MySQL healthcheck plus `depends_on: condition: service_healthy`.
-* `GET /healthz` reporting DB reachability.
+### Phase 5 — Progress view ✅ *(G7)*
+Streak tiles, a 12-week calendar heatmap and 30-day per-routine adherence. The
+heatmap uses a single-hue sequential ramp validated in both light and dark
+against this app's surfaces, with a legend, a hover/focus readout and a table view.
 
-**Exit criterion:** `docker compose up` on a clean volume yields an API serving
-requests against migrated tables, with no manual steps.
+### Phase 6 — Infrastructure hardening ✅ *(G17, G18, G20, G27)*
+nginx image serving the PWA and proxying `/api`. `.env` with `.env.example`;
+no credentials in the repo. `DB_DATA_PATH` bind mount for NAS storage.
+`cloudflared` behind a profile. `scripts/backup.sh` with a documented restore.
 
-**Outstanding:** the exit criterion has not been observed against real
-containers. The session that did this work had Docker Hub blocked by egress
-policy and could not pull `python:3.11-slim` or `mysql:8.0`, so the entrypoint,
-migration, API round-trips, and both `/healthz` paths were exercised directly
-against SQLite instead. The image build, the MySQL healthcheck command, and the
-`service_healthy` gating remain unproven. Run `docker compose up --build` on a
-clean volume before relying on this phase.
+### Phase 7 — Tests and CI ✅ *(G22)*
+52 backend tests (endpoints, validators, auth, streak rules, scheduler
+selection, and a check that migrations match the models) and 19 frontend tests
+(date helpers, VAPID decoding, checklist row). GitHub Actions runs both.
 
-### Phase 2 — Backend data model and API
+## Next
 
-*Closes G8, G12–G16.*
-
-One migration adding: NOT NULL where the model requires it, `log_date DATE` with
-`UNIQUE(routine_id, log_date)`, `Routine.is_active` and `end_date`,
-`Product.archived_at`, nullable `user_id` on all three tables, FK `ondelete`
-rules, `notification_time` as `TIME`. Pydantic validators for weekdays 1–7
-(sorted, unique, non-empty). Full CRUD for products and routines, upsert for
-logs, 404 on missing foreign keys. New endpoints `GET /routines/today`,
-`GET /logs/calendar`, `GET /stats/streak`. Bearer-token middleware and
-configuration-driven CORS.
-
-**Exit criterion:** every endpoint in specs.md §6 exists and behaves as specified.
-
-### Phase 3 — Frontend catches up
-
-*Closes G3, G5, G6, G9, G10, G11, G23.*
-
-`API_BASE_URL` via `--dart-define` defaulting to `10.0.2.2`; bearer token header.
-Today screen driven by `/routines/today`, so checkboxes hydrate from the server
-and can be unchecked. Skip action. Product autocomplete against `/products/`
-instead of blind creation. Edit and delete wired to the Phase 2 endpoints.
-Day-of-week picker and time picker in the add/edit form.
-
-**Exit criterion:** the checklist shows only today's routines and its state
-survives an app restart.
-
-### Phase 4 — Notifications
-
-*Closes G2, G4.*
-
-`NotificationService` over `flutter_local_notifications`; promote `timezone` to
-a direct dependency. Android: `INTERNET` and `POST_NOTIFICATIONS` in the main
-manifest, exact-alarm permission, `RECEIVE_BOOT_COMPLETED` with reschedule on
-boot, runtime permission request on 13+. iOS: Darwin initialization settings and
-permission request. One recurring `zonedSchedule` per routine per weekday from
-`notification_time` using the D2 mapping; full reschedule after any routine
-mutation; cancel on delete. Tapping a notification deep-links to the checklist.
-
-**Exit criterion:** a routine scheduled for the next minute raises a
-notification on a physical device, and still does after a reboot.
-
-### Phase 5 — Progress view
-
-*Closes G7.*
-
-Calendar heatmap plus current and longest streak per D7, and 30-day adherence
-per routine, off the Phase 2 endpoints.
-
-### Phase 6 — Infrastructure hardening
-
-*Closes G17, G18, G20.*
-
-`.env` and `env_file`, secrets out of the repo, `.env.example` committed, 3306
-unpublished. DB volume bind-mounted to the NAS path. `cloudflared` service plus
-a Cloudflare Access policy. `mysqldump` backup cron with a documented restore.
-Offline read cache and queued writes in the app.
-
-### Phase 7 — Tests and CI
-
-*Closes G22.*
-
-pytest + httpx against a throwaway database covering every endpoint and the
-streak math. Replace the stale `widget_test.dart` with provider tests over a
-mocked `ApiService` plus a today-screen widget test. GitHub Actions running
-`pytest`, `flutter analyze`, `flutter test`.
-
-## Sequencing notes
-
-* Phases 1 and 2 are the unlock — the stack does not survive a cold start today,
-  and frontend work cannot be verified until it does.
-* Phases 4 and 5 are independent of each other and may be reordered.
-* Phase 6 must land before the API is ever exposed through the tunnel; Phase 2's
-  auth work is a prerequisite for it.
+1. **G28** — add `Routine.start_date`, default it to the creation date, and use
+   it in `is_due` so history before a routine existed is never counted as missed.
+   Removes the client-side workaround in `ProgressView`.
+2. **G29** — cache the checklist response and queue writes while offline.
+3. Verify the container stack on a machine with Docker Hub access, and confirm a
+   real push arrives on a phone.

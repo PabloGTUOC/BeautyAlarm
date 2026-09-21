@@ -5,13 +5,13 @@ Working notes for Claude Code sessions in this repository.
 ## What this project is
 
 A self-hosted beauty/skincare routine tracker: FastAPI + MySQL on a home NAS,
-Flutter app on the phone, Cloudflare Tunnel between them. See
+an installable Vue PWA on the phone, Cloudflare Tunnel between them. See
 [README.md](README.md) for the product summary.
 
 ## Read these first
 
-1. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1–D8 in §3
-   resolve the ambiguities in the original brief. Treat them as settled;
+1. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D10 in
+   §3 resolve the ambiguities in the original brief. Treat them as settled;
    changing one is a spec change, so update specs.md in the same commit.
 2. **[PLAN.md](PLAN.md)** — the gap register (G1–G23) and the phased plan.
    This is the source of truth for what is done and what is next.
@@ -33,15 +33,20 @@ before it ends.** Specifically:
 
 ## Conventions
 
-* **ISO weekdays, 1 = Monday … 7 = Sunday** (D2). Dart's `DateTime.weekday` and
-  Python's `datetime.isoweekday()` both match this. **Python's `weekday()` is
-  0-based — never use it here.**
+* **ISO weekdays, 1 = Monday … 7 = Sunday** (D2). Python's
+  `datetime.isoweekday()` matches this. **Python's `weekday()` is 0-based and
+  JavaScript's `getDay()` is 0=Sunday — neither may be used directly.** The
+  client converts once, in `isoWeekday()` in `frontend/src/dates.ts`.
 * **Local date vs UTC timestamp** (§4). `DailyLog.log_date` is the local
   calendar date per `APP_TIMEZONE` and is what "today", uniqueness, and streaks
   are computed on. `DailyLog.timestamp` is the UTC instant. Mixing them puts a
   00:30 check-off on the wrong day.
 * **`time_period` never triggers anything** — it is a display bucket.
   `notification_time` is the only trigger source (§4).
+* **Never format a date with `toISOString()`** in the client. It converts to UTC
+  first and lands on the wrong day near midnight. Use `toLocalIsoDate()`.
+* **The API runs a single worker** (D10). The notification scheduler lives in
+  the process; a second worker would send every notification twice.
 * **No secrets in the repo.** Configuration comes from the environment; commit
   `.env.example`, never `.env`.
 * **Migrations, not `create_all`.** Schema changes go through an Alembic
@@ -50,13 +55,16 @@ before it ends.** Specifically:
 ## Commands
 
 ```bash
+cp .env.example .env
 docker compose up --build          # dev stack (override file applies automatically)
 docker compose -f docker-compose.yml up --build   # production-shaped run
+docker compose --profile tunnel up -d             # adds Cloudflare Tunnel
 docker compose exec api alembic revision --autogenerate -m "message"
-docker compose exec api alembic upgrade head
+docker compose exec api python scripts/generate_vapid_keys.py
 curl localhost:8000/healthz
 
-cd frontend && flutter analyze && flutter test
+cd backend  && pytest
+cd frontend && npm test && npm run typecheck && npm run build
 ```
 
 ## Git
@@ -71,6 +79,61 @@ traceable.
 
 Newest entries at the top. Each entry records where the session ended so the
 next one can pick up without re-deriving context.
+
+### 2026-09-21 — Phases 2 to 7, and the move to a PWA
+
+**Decision change.** Partway through, the client moved from Flutter to a Vue
+PWA at the user's direction. That invalidated **D1** (local notifications, no
+server infrastructure): a PWA cannot schedule its own alarms, because the
+Notification Triggers API never shipped past a Chromium origin trial. specs.md
+§3 now carries **D1a** (Vue PWA), **D1b** (Web Push driven by a scheduler in the
+API), **D9** (nginx serves the app and proxies `/api`, so production is
+same-origin) and **D10** (the scheduler is an asyncio loop, so the API must run
+a single worker). The consequence to remember: **reminders now need the NAS
+awake and able to reach the browser vendor's push service**, which the original
+D1 deliberately avoided.
+
+**Did:** Phases 2–7. Backend data model, full CRUD, auth, derived views. Deleted
+the Flutter client and built the Vue PWA (checklist, routine editor, progress,
+settings). Web Push end to end: `push_subscriptions`, VAPID, delivery with dead
+endpoint pruning, an in-process scheduler, and the client subscription flow.
+Progress view with a validated single-hue heatmap. nginx image, `.env`,
+NAS bind mount, `cloudflared` profile, backup script. 52 backend and 19 frontend
+tests, and GitHub Actions running both.
+
+**Verified:** backend suite 52 passed; frontend suite 19 passed; `vue-tsc` clean;
+`vite build` clean. Drove the built PWA in headless Chromium against the real
+API: the checklist rendered both sections, checking a routine off persisted
+across a reload (G6), undo reverted it, the routine list and editor rendered,
+and the Progress view showed streaks of 8 and 19 computed from six weeks of
+seeded history with 84 heatmap cells and a working hover readout. Zero console
+errors. Both compose files pass `docker compose config`.
+
+**NOT verified:**
+* **No container was ever built or run.** Docker Hub is blocked by this
+  environment's egress policy (403 on `production.cloudfront.docker.com`), so
+  `python:3.11-slim`, `mysql:8.0`, `node:22-alpine` and `nginx:1.27-alpine`
+  could not be pulled. Everything was exercised directly instead — the API on
+  SQLite, the PWA via `vite preview` with the same proxy shape nginx uses. The
+  images, the MySQL healthcheck, the `service_healthy` gating and the nginx
+  config are all unproven.
+* **Nothing has run against MySQL.** The tests and both migrations ran on
+  SQLite. Migration `b2f1c4d7e9a3` changes column types and adds NOT NULL
+  constraints, and its foreign-key rework is MySQL-only code that never
+  executed.
+* **No push was ever delivered.** No browser push endpoint was reachable. The
+  scheduler's selection logic, the subscription endpoints and the key generator
+  are tested; `pywebpush` delivery itself is not.
+
+**Ended at:** all seven phases complete, two gaps deliberately left open —
+**G28** (routines have no `start_date`, so the calendar cannot tell "did not
+exist yet" from "missed"; worked around client-side) and **G29** (no offline
+cache or write queue; the shell is precached but every screen needs the API).
+Both are written up in PLAN.md.
+
+**Next:** run `docker compose up --build` on a machine with Docker Hub access
+and confirm `/healthz`, the app at :8080 and a real push on a phone. Then G28,
+which is a small migration plus a change to `is_due`.
 
 ### 2026-09-21 — Phases 0 and 1
 

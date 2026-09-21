@@ -129,3 +129,43 @@ class CalendarDay(BaseModel):
 class StreakResponse(BaseModel):
     current: int
     longest: int
+
+
+class RoutineAdherence(BaseModel):
+    routine_id: int
+    product_name: str
+    due: int
+    completed: int
+
+
+# --- Web Push ---
+
+class PushPublicKey(BaseModel):
+    public_key: str
+
+
+class PushKeys(BaseModel):
+    p256dh: str = Field(min_length=1, max_length=255)
+    auth: str = Field(min_length=1, max_length=255)
+
+
+class PushSubscriptionCreate(BaseModel):
+    """Shaped like the browser's PushSubscription.toJSON()."""
+
+    endpoint: str = Field(min_length=1, max_length=500)
+    keys: PushKeys
+
+
+class PushEndpoint(BaseModel):
+    endpoint: str = Field(min_length=1, max_length=500)
+
+
+class PushSubscription(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    endpoint: str
+
+
+class PushResult(BaseModel):
+    delivered: int

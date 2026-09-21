@@ -88,3 +88,19 @@ class DailyLog(Base):
     user_id = Column(Integer, nullable=True)
 
     routine = relationship("Routine", back_populates="logs")
+
+
+class PushSubscription(Base):
+    """A browser's Web Push endpoint (D1b). One row per installed client."""
+
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    endpoint = Column(String(500), nullable=False, unique=True)
+    p256dh = Column(String(255), nullable=False)
+    auth = Column(String(255), nullable=False)
+    created_at = Column(DateTime, nullable=False)
+    # Set when a send fails transiently. A 404 or 410 deletes the row instead:
+    # the browser has thrown the subscription away and it will never work again.
+    last_failure_at = Column(DateTime, nullable=True)
+    user_id = Column(Integer, nullable=True)

@@ -18,10 +18,19 @@ class Settings(BaseSettings):
     # only acceptable on a development machine; main.py warns loudly at startup.
     api_token: str = ""
 
-    # Exact allowed origins, comma separated. The mobile app does not need CORS;
-    # this exists for the Flutter web dev server.
+    # Production is same-origin behind nginx (D9), so these exist for the Vite
+    # dev server only.
     cors_origins: str = ""
     cors_origin_regex: str = ""
+
+    # Web Push (D1b). Generate a pair with scripts/generate_vapid_keys.py.
+    # Without them the push endpoints answer 503 and the scheduler stays idle.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:admin@example.com"
+
+    # How often the scheduler wakes. Below 60s so no minute is ever skipped.
+    scheduler_interval_seconds: int = 20
 
     model_config = {"case_sensitive": False}
 
@@ -32,6 +41,10 @@ class Settings(BaseSettings):
     @property
     def auth_enabled(self) -> bool:
         return bool(self.api_token)
+
+    @property
+    def push_enabled(self) -> bool:
+        return bool(self.vapid_public_key and self.vapid_private_key)
 
 
 @lru_cache

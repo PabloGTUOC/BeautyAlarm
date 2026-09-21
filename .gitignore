@@ -17,3 +17,11 @@ venv/
 
 # Python test artifacts
 .pytest_cache/
+
+# Local environment and data
+data/
+backups/
+
+# Frontend
+node_modules/
+dist/

@@ -1,13 +1,17 @@
 # Development overrides, applied automatically by `docker compose up`.
-# Everything here is deliberately absent from the production image.
+# Everything here is deliberately absent from the production images.
 services:
   db:
-    # Exposed for local inspection with a MySQL client. Never published in a
-    # NAS deployment.
+    # Exposed for local inspection with a MySQL client. Never published on a NAS.
     ports:
       - "3306:3306"
 
   api:
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      # The Vite dev server is a different origin; production is same-origin (D9).
+      CORS_ORIGIN_REGEX: "http://(localhost|127\\.0\\.0\\.1)(:\\d+)?"
+    ports:
+      - "8000:8000"
     volumes:
       - ./backend:/app
