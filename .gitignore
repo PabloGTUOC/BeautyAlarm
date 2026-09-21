@@ -14,6 +14,9 @@ venv/
 # Environment files
 .env
 .env.*
+# ...but the template must be committed: the setup instructions start with
+# `cp .env.example .env`.
+!.env.example
 
 # Python test artifacts
 .pytest_cache/
