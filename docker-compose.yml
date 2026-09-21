@@ -1,5 +1,6 @@
-version: '3.8'
-
+# Production-shaped stack. `docker compose up` also applies
+# docker-compose.override.yml (hot reload, source mount, published DB port);
+# run `docker compose -f docker-compose.yml up` to exclude it.
 services:
   db:
     image: mysql:8.0
@@ -9,21 +10,29 @@ services:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_USER: beauty_user
       MYSQL_PASSWORD: beautypassword
-    ports:
-      - "3306:3306"
     volumes:
       - db_data:/var/lib/mysql
+    healthcheck:
+      # 127.0.0.1 rather than localhost: during initialisation MySQL runs a
+      # temporary socket-only server, and a socket ping would report healthy
+      # before the real server accepts TCP connections.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   api:
     build: ./backend
+    restart: always
     ports:
       - "8000:8000"
     environment:
       - DATABASE_URL=mysql+mysqldb://beauty_user:beautypassword@db:3306/beauty_alarm
+      - APP_TIMEZONE=Europe/Madrid
     depends_on:
-      - db
-    volumes:
-      - ./backend:/app
+      db:
+        condition: service_healthy
 
 volumes:
   db_data:

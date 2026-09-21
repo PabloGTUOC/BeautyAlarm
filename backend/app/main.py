@@ -1,9 +1,12 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from typing import List
 from . import models, schemas
-from .database import engine, get_db
+from .database import get_db
 
 app = FastAPI(title="Beauty Routine Tracker API")
 
@@ -18,6 +21,20 @@ app.add_middleware(
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Beauty Routine Tracker API"}
+
+# Health
+# Unauthenticated by design (specs.md section 6) so the container healthcheck
+# and the tunnel can probe it without a token.
+@app.get("/healthz")
+def healthz(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "database": "unreachable"},
+        )
+    return {"status": "ok", "database": "ok"}
 
 # Products
 @app.post("/products/", response_model=schemas.Product)

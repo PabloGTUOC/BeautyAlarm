@@ -15,5 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+RUN chmod +x /app/entrypoint.sh
+
+# Migrations run on every start, so a clean volume boots to a working API.
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# No --reload here: hot reload is a development concern and lives in
+# docker-compose.override.yml.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

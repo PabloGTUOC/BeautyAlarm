@@ -1,0 +1,13 @@
+# Development overrides, applied automatically by `docker compose up`.
+# Everything here is deliberately absent from the production image.
+services:
+  db:
+    # Exposed for local inspection with a MySQL client. Never published in a
+    # NAS deployment.
+    ports:
+      - "3306:3306"
+
+  api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ./backend:/app
