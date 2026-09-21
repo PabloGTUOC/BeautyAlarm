@@ -8,12 +8,49 @@ A self-hosted beauty/skincare routine tracker: FastAPI + MySQL on a home NAS,
 an installable Vue PWA on the phone, Cloudflare Tunnel between them. See
 [README.md](README.md) for the product summary.
 
+## Current state (2026-09-21)
+
+All seven phases in [PLAN.md](PLAN.md) are complete on branch
+`claude/relaxed-dirac-9acm9t`. The backend, the PWA, Web Push, the progress
+view, the Docker stack and CI all exist.
+
+**Proven:** 52 backend tests, 19 frontend tests, `vue-tsc` and `vite build`
+clean. The built PWA was driven in a headless browser against a live API —
+check-off persisted across a reload, undo reverted it, streaks computed
+correctly from seeded history, no console errors.
+
+**Not proven — do this first.** No container has ever been built and nothing
+has ever run against MySQL, because the environment that wrote this code had
+Docker Hub blocked. The API was exercised on SQLite and the PWA through
+`vite preview`. So on a machine with registry access:
+
+```bash
+cp .env.example .env          # then change the passwords
+docker compose up --build     # first real boot
+curl localhost:8000/healthz   # expect {"status":"ok","database":"ok"}
+open http://localhost:8080    # the app
+```
+
+Watch for these, in likelihood order:
+
+1. **Migration `b2f1c4d7e9a3` on MySQL.** It changes column types, adds NOT NULL
+   constraints, and contains a foreign-key rework guarded to non-SQLite that has
+   never executed. This is the most likely thing to fail.
+2. The MySQL healthcheck command and the `service_healthy` gating.
+3. `frontend/nginx.conf` — the SPA fallback and the `/api/` proxy.
+4. A real Web Push delivery. No push has ever reached a browser endpoint.
+
+**Open gaps:** **G28** (routines have no `start_date`, so the calendar cannot
+tell "did not exist yet" from "missed"; worked around client-side in
+`ProgressView.vue`) and **G29** (no offline cache or write queue). Both are
+written up in PLAN.md. Everything else in the register is closed or obsolete.
+
 ## Read these first
 
 1. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D10 in
    §3 resolve the ambiguities in the original brief. Treat them as settled;
    changing one is a spec change, so update specs.md in the same commit.
-2. **[PLAN.md](PLAN.md)** — the gap register (G1–G23) and the phased plan.
+2. **[PLAN.md](PLAN.md)** — the gap register (G1–G29) and the phased plan.
    This is the source of truth for what is done and what is next.
 
 ## Keeping the docs current
@@ -79,6 +116,28 @@ traceable.
 
 Newest entries at the top. Each entry records where the session ended so the
 next one can pick up without re-deriving context.
+
+### 2026-09-21 — Documentation audit
+
+**Did:** no code changes. Audited the four Markdown files for drift after the
+phase work and fixed what was wrong:
+
+* `specs.md` §6 was missing `GET /stats/adherence`. The endpoint is implemented,
+  tested and used by the progress view, and §7 describes the feature — only the
+  API table never got the row.
+* `CLAUDE.md` still described the register as G1–G23. It runs to G29.
+* Added a **Current state** section to the top of this file. The state was only
+  recorded in the session log at the bottom, so a fresh session had to read to
+  the end to find out that nothing has been containerised yet. It now leads with
+  what is proven, the exact first commands, and what is most likely to break.
+
+**Verified:** every internal Markdown link resolves, every file path named in
+the docs exists, and the test counts the docs claim are real — 52 backend and
+19 frontend, both re-run.
+
+**Ended at:** docs accurate against the code at this commit. Working tree clean.
+
+**Next:** unchanged — first real `docker compose up --build`, then G28.
 
 ### 2026-09-21 — Phases 2 to 7, and the move to a PWA
 

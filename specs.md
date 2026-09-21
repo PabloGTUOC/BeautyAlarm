@@ -134,6 +134,7 @@ All routes require `Authorization: Bearer $API_TOKEN` except `/healthz` (D5).
 | DELETE | `/logs/{id}` | undo a check-off |
 | GET | `/logs/calendar?from=&to=` | per-day due/completed/skipped counts |
 | GET | `/stats/streak` | current and longest streak per D7 |
+| GET | `/stats/adherence?days=` | per-routine due/completed counts over a window (default 30 days) |
 | GET | `/push/public-key` | the VAPID public key the client subscribes with |
 | POST | `/push/subscribe` | register or refresh a browser subscription |
 | POST | `/push/unsubscribe` | drop a subscription by endpoint |
