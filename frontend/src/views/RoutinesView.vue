@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useRoutinesStore } from '../stores/routines'
 import { describeDays, trimSeconds } from '../dates'
+import { describeProducts } from '../products'
 import type { Routine } from '../types'
 
 const store = useRoutinesStore()
@@ -22,7 +23,7 @@ function summary(routine: Routine): string {
 
 /** The products in application order, or nothing for an action or service. */
 function steps(routine: Routine): string {
-  return routine.products.map((p) => p.name).join(' → ')
+  return describeProducts(routine.products)
 }
 
 async function remove(routine: Routine): Promise<void> {

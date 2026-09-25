@@ -79,3 +79,25 @@ describe('TrackingRow', () => {
     expect(wrapper.find('button').attributes('disabled')).toBeDefined()
   })
 })
+
+describe('TrackingRow products', () => {
+  it('shows what a tracked routine applies', () => {
+    // Regression: TrackingRow had no reference to products at all, so a
+    // "every 3 days, these three things" routine showed a name and a counter
+    // and nothing to put on your face.
+    const withProducts = entry()
+    withProducts.routine.name = 'NightRoutineDay1'
+    withProducts.routine.products = [
+      { id: 1, name: 'Hyaluron', brand: null, notes: null, archived_at: null },
+      { id: 2, name: 'Retinol 0.5%', brand: null, notes: null, archived_at: null },
+      { id: 3, name: 'Moisturizer', brand: null, notes: null, archived_at: null }
+    ]
+    const wrapper = mount(TrackingRow, { props: { entry: withProducts, busy: false } })
+    expect(read(wrapper)).toContain('Hyaluron → Retinol 0.5% → Moisturizer')
+  })
+
+  it('stays clean for a service with no products', () => {
+    const wrapper = mount(TrackingRow, { props: { entry: entry(), busy: false } })
+    expect(wrapper.find('.steps').exists()).toBe(false)
+  })
+})

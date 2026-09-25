@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { trimSeconds } from '../dates'
+import { describeProducts } from '../products'
 import type { LogStatus, TodayEntry } from '../types'
 
 const props = defineProps<{ entry: TodayEntry; busy: boolean }>()
@@ -9,17 +10,11 @@ const emit = defineEmits<{ log: [LogStatus]; undo: [] }>()
 const status = computed(() => props.entry.log?.status ?? null)
 const products = computed(() => props.entry.routine.products ?? [])
 
-/** Application order, e.g. "Hyaluronic Acid → Peptides" (D8a). One tick covers
- *  the whole routine (D6), so these are steps to follow, not checkboxes. */
-const steps = computed(() => products.value.map((p) => p.name).join('  →  '))
+/** What to apply, in order (D8a). One tick covers the whole routine (D6), so
+ *  these are steps to follow, not checkboxes. */
+const steps = computed(() => describeProducts(products.value))
 
 const time = computed(() => trimSeconds(props.entry.routine.notification_time))
-
-/** Only shown for a single-product routine: with three products the brand of
- *  the first one is noise. */
-const brand = computed(() =>
-  products.value.length === 1 ? products.value[0].brand : null
-)
 </script>
 
 <template>
@@ -40,12 +35,11 @@ const brand = computed(() =>
 
     <!-- Full width, below the actions rather than beside them: a three-product
          stack wrapped to three lines when it was boxed into half the row. -->
-    <p v-if="products.length > 1" class="steps">{{ steps }}</p>
+    <p v-if="products.length" class="steps">{{ steps }}</p>
 
     <p class="meta">
       <span v-if="status === 'completed'" class="state">Done</span>
       <span v-else-if="status === 'skipped'" class="state">Skipped</span>
-      <span v-if="brand">{{ brand }}</span>
       <span v-if="time">{{ time }}</span>
     </p>
   </div>

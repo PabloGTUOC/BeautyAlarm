@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { describeProducts } from '../products'
 import type { TrackingEntry } from '../types'
 
 const props = defineProps<{ entry: TrackingEntry; busy: boolean }>()
 const emit = defineEmits<{ done: [] }>()
 
 const days = computed(() => props.entry.days_since)
+
+/** A tracked routine may well have products: the editor offers them, and
+ *  "every 3 days, these three things" is a normal way to use this. Omitting
+ *  them left the row showing a name and a counter, and nothing to apply. */
+const products = computed(() => props.entry.routine.products ?? [])
+const steps = computed(() => describeProducts(products.value))
 
 /** The count is the thing the screen exists to answer, so it is set separately
  *  from its unit rather than buried in a sentence. Null is stated honestly:
@@ -42,6 +49,8 @@ const target = computed(() => {
         Mark done
       </button>
     </div>
+
+    <p v-if="products.length" class="steps">{{ steps }}</p>
 
     <p class="meta">
       <!-- The word carries the state, not the tint: colour alone would be
@@ -95,6 +104,14 @@ const target = computed(() => {
   letter-spacing: -0.02em;
 }
 .tracker.overdue .n { color: var(--danger); }
+
+.steps {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
 
 .meta {
   display: flex;

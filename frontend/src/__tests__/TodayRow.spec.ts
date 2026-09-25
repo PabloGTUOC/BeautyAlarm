@@ -41,6 +41,26 @@ describe('TodayRow', () => {
     expect(read(wrapper)).toContain('22:00')
   })
 
+  it('shows the product of a single-product routine', () => {
+    // Regression: the product line was hidden below two products, so a routine
+    // you named yourself showed its name and nothing to actually apply.
+    const named = entry()
+    named.routine.name = 'Morning cleanse'
+    named.routine.products = [
+      { id: 7, name: 'Gentle Hydrating Cleanser', brand: 'CeraVe', notes: null, archived_at: null }
+    ]
+    const wrapper = mount(TodayRow, { props: { entry: named, busy: false } })
+    expect(read(wrapper)).toContain('Morning cleanse')
+    expect(read(wrapper)).toContain('Gentle Hydrating Cleanser')
+  })
+
+  it('does not invent a product line for a routine that has none', () => {
+    const service = entry()
+    service.routine.products = []
+    const wrapper = mount(TodayRow, { props: { entry: service, busy: false } })
+    expect(wrapper.find('.steps').exists()).toBe(false)
+  })
+
   it('lists several products in application order (D8a)', () => {
     const layered = entry()
     layered.routine.name = 'Night stack'

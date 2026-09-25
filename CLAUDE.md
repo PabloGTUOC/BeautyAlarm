@@ -57,7 +57,7 @@ particularly before exposing the tunnel.
 2. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D14 in
    §3 resolve the ambiguities in the original brief. Treat them as settled;
    changing one is a spec change, so update specs.md in the same commit.
-3. **[PLAN.md](PLAN.md)** — the gap register (G1–G47) and the phased plan.
+3. **[PLAN.md](PLAN.md)** — the gap register (G1–G48) and the phased plan.
    This is the source of truth for what is done and what is next.
 
 ## Keeping the docs current
@@ -117,6 +117,11 @@ before it ends.** Specifically:
   `routine_products.position`, and may own none. Read them with
   `routine.products`, never `routine.product` — that attribute is gone. One
   check-off still covers the whole routine (D6).
+* **Render a product list with `describeProducts()`** from `frontend/src/products.ts`,
+  never inline. Today's checklist, the Tracking section and the routine list each
+  had their own copy and drifted until two of them were wrong (G48). **A tracked
+  routine can have products too** — "every 3 days, these three things" is a normal
+  way to use this, and the editor offers it.
 * **A routine's label is `routine.name`**, which is required. Do not fall back
   to a product name: a routine may have three products or none.
 * **Replacing a routine's products needs a flush between the delete and the
