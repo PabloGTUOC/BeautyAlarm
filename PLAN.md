@@ -3,7 +3,7 @@
 Living document. Update the status column as work lands; the gap IDs are stable
 and referenced from commit messages and [CLAUDE.md](CLAUDE.md).
 
-**Last updated:** 2026-09-21
+**Last updated:** 2026-09-24
 
 ## Status at a glance
 
@@ -17,17 +17,24 @@ and referenced from commit messages and [CLAUDE.md](CLAUDE.md).
 | 5 | Progress view | G7 | ✅ Done |
 | 6 | Infra hardening | G17, G18, G20, G27 | ✅ Done† |
 | 7 | Tests and CI | G22 | ✅ Done |
+| 8 | Multi-product routines and tracked services | G28, G30–G38 | ✅ Done§ |
 
-† The containerised stack has never been built or run: Docker Hub is blocked by
-the development environment's egress policy. Both compose files validate with
-`docker compose config`, and everything inside them was exercised directly, but
-the images themselves are unproven. See [CLAUDE.md](CLAUDE.md).
+† Resolved on 2026-09-21: the stack was built and run on the user's machine.
+Both images build, the MySQL healthcheck and `service_healthy` gating work, all
+three migrations apply on real MySQL, and nginx serves the PWA and proxies
+`/api/`. See the session log in [CLAUDE.md](CLAUDE.md).
 
-‡ Delivery to a real browser push service is unproven for the same reason — no
-public endpoint was reachable. The selection logic, subscription storage and
-endpoint behaviour are covered by tests.
+‡ Delivery to a real browser push service is still unproven. VAPID keys are
+configured and the scheduler starts, but no browser had subscribed at the time
+of writing. The selection logic, subscription storage and endpoint behaviour are
+covered by tests.
 
-**Open gaps: G28, G29.** Everything else is closed or obsolete.
+§ Verified on the running stack against real MySQL: both migrations applied to
+live data with no loss, 80 backend and 29 frontend tests pass, and both features
+were exercised end to end through the API. The rebuilt PWA has not yet been
+driven in a browser.
+
+**Open gaps: G29.** Everything else is closed or obsolete.
 
 ## Gap register
 
@@ -89,8 +96,22 @@ some gaps by deletion and made one obsolete.
 | G25 | No push subscription storage, VAPID keys or scheduler | ✅ Phase 4 |
 | G26 | No web app manifest, service worker or icons | ✅ Phase 3 — `vite-plugin-pwa`, generated icons |
 | G27 | The built PWA had nothing serving it | ✅ Phase 6 — nginx image proxying `/api` (D9) |
-| **G28** | **Routines have no `start_date`**, so nothing distinguishes "did not exist yet" from "missed". The calendar treats days before the first log as unknown, which is right for a fresh install and wrong for a routine added later. | ⬜ **Open** — needs a `start_date` column, defaulted to the creation date |
+| **G28** | **Routines have no `start_date`**, so nothing distinguishes "did not exist yet" from "missed". The calendar treats days before the first log as unknown, which is right for a fresh install and wrong for a routine added later. Confirmed against live data on 2026-09-24: routines created two days earlier reported `due: 13` over a 30-day adherence window. | ✅ Phase 8 — `start_date` added in M2, honoured by `is_due`; the client-side workaround in `ProgressView` is gone |
 | **G29** | **No offline support.** The shell is precached so the app opens, but every screen needs the API: no cached checklist, no write queue. | ⬜ **Open** — D6's upsert semantics already make replay safe |
+
+### Phase 8 — requested after first real use (2026-09-24)
+
+| ID | Gap | Status |
+|---|---|---|
+| **G30** | **A routine holds exactly one product.** A layered routine — hyaluronic acid, then peptides, then moisturiser — cannot be expressed except as three separate routines that must be ticked separately. | ✅ Phase 8 — `routine_products` join table with `position` (D8a) |
+| **G31** | **Routines have no name.** Every label in the UI is `routine.product.name`, which has nothing to borrow from once a routine has three products or none. | ✅ Phase 8 — required `name` column, backfilled from the old product name plus slot |
+| **G32** | **Every routine is a weekday schedule.** Things done on an interval rather than a schedule — a haircut, a facial — cannot be modelled at all. | ✅ Phase 8 — `kind` plus `target_interval_days` (D11) |
+| **G33** | **Streaks and adherence would count tracked routines as daily misses.** D7 asks whether every routine due that day is completed; a tracked routine is never due on a given day, so leaving it in pins the streak at zero forever. | ✅ Phase 8 — `scheduled_only()` scopes streaks and adherence (D12) |
+| **G34** | **Today has no Tracking section** and the API returns no elapsed-time data, so "23 days since your last haircut" cannot be shown. | ✅ Phase 8 — `tracking` section on `/routines/today` |
+| **G35** | **The scheduler cannot notify on an elapsed interval** — selection is purely weekday plus `notification_time`. | ✅ Phase 8 — `tracked_overdue_at()`, repeating every second day (D12) |
+| **G36** | **The routine editor is single-product and schedule-only** — no kind toggle, no ordered product picker, no interval field. | ✅ Phase 8 — kind toggle, ordered product picker, interval field |
+| **G38** | **Every touch target was below the 44px minimum**, measured on a 390px viewport: buttons 37px, tab-bar links 35px, weekday chips 30px — 24 of 24 controls failing, in an app used one-handed and half-awake. Found by measuring the rendered PWA, not by reading the CSS. | ✅ Phase 8 — `--tap` floor applied to every control; 0 of 24 failing, verified in both themes at 320/390/430px |
+| **G37** | **The test suite was not hermetic.** `conftest.py` set `DATABASE_URL`, `APP_TIMEZONE` and `API_TOKEN` but not the VAPID pair, so running it inside the `api` container inherited the deployment's real keys from `.env`: "unconfigured" tests saw a configured app and the scheduler started against a database the fixtures never created. Green in CI, red on the machine the stack runs on. | ✅ Phase 8 — `conftest.py` clears both VAPID keys |
 
 ## Phases
 
@@ -138,11 +159,52 @@ no credentials in the repo. `DB_DATA_PATH` bind mount for NAS storage.
 selection, and a check that migrations match the models) and 19 frontend tests
 (date helpers, VAPID decoding, checklist row). GitHub Actions runs both.
 
+### Phase 8 — Multi-product routines and tracked services ✅ *(G28, G30–G36)*
+
+Requested after the first real use of the running stack. Two changes to what a
+routine *is*, locked as **D8a**, **D11** and **D12** in [specs.md](specs.md).
+
+**Migrations.** Two, so each reverses independently.
+
+* **M1** — create `routine_products`, backfill one row per existing routine
+  (`SELECT id, product_id, 0 FROM routines`), then drop `routines.product_id`.
+  Downgrade only works while every routine has ≤1 product; the revision says so.
+* **M2** — add `name`, `kind`, `target_interval_days`, `start_date`; relax
+  `days_of_week` and `time_period` to nullable. Backfill `name` from the routine's
+  single product name plus its time period ("Retinol 0.5% — night"), and
+  `start_date` from `MIN(log_date)` per routine. **`routines` has no `created_at`**,
+  so the earliest log is the best available proxy, falling back to today.
+
+⚠️ **M1 is the first migration in this project's life to drop a column holding
+live rows.** Run `scripts/backup.sh` before applying it.
+
+**Backend.** `is_due` branches on kind and honours `start_date`. New
+`tracker_state(routine, today)` returns `last_completed`, `days_since` and
+`overdue`. `compute_streaks` and adherence filter to `kind='scheduled'` (G33 —
+the one place a mistake is silent rather than loud). `/routines/today` grows a
+`tracking` section. Routine create/patch take an ordered `product_ids`, `kind`,
+`name`, `target_interval_days` and `start_date`, with a per-kind validation
+matrix returning 422 on contradictions.
+
+**Breaking API change:** `routine.product` becomes `routine.products[]`. Backend
+and frontend ship in one commit.
+
+**Frontend.** Today gains a Tracking section with day counters and *mark done*.
+The editor gains a kind toggle, an ordered add/remove/reorder product picker, a
+name field and an interval field. `ProgressView` loses its client-side G28
+workaround.
+
+**Scheduler.** Tracked routines notify at `notification_time` when overdue, then
+every second day while they stay overdue.
+
+**Order of work.** 1. specs + plan. 2. M1, models, join-table CRUD. 3. M2, kind
+validation, `is_due`/streak/adherence scoping. 4. `/routines/today` tracking.
+5. Frontend. 6. Scheduler. 7. Docs and session log. Steps 2 and 3 each keep the
+52 backend tests passing; step 5 updates the 19 frontend ones.
+
 ## Next
 
-1. **G28** — add `Routine.start_date`, default it to the creation date, and use
-   it in `is_due` so history before a routine existed is never counted as missed.
-   Removes the client-side workaround in `ProgressView`.
+1. **Phase 8**, in the order above.
 2. **G29** — cache the checklist response and queue writes while offline.
-3. Verify the container stack on a machine with Docker Hub access, and confirm a
-   real push arrives on a phone.
+3. Confirm a real push arrives on a phone. The stack itself is now verified on
+   real hardware; only push delivery remains unproven.

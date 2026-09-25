@@ -8,49 +8,50 @@ A self-hosted beauty/skincare routine tracker: FastAPI + MySQL on a home NAS,
 an installable Vue PWA on the phone, Cloudflare Tunnel between them. See
 [README.md](README.md) for the product summary.
 
-## Current state (2026-09-21)
+## Current state (2026-09-24)
 
-All seven phases in [PLAN.md](PLAN.md) are complete and merged to `main`. The
-backend, the PWA, Web Push, the progress view, the Docker stack and CI all
-exist.
+Phases 0–8 are complete. Phase 8 (multi-product routines and tracked services)
+is on the branch `phase8-multi-product-tracked`, **not yet merged to `main`**.
 
-**Proven:** 52 backend tests, 19 frontend tests, `vue-tsc` and `vite build`
-clean. The built PWA was driven in a headless browser against a live API —
-check-off persisted across a reload, undo reverted it, streaks computed
-correctly from seeded history, no console errors.
+**Proven on real hardware.** The stack was built and run on the user's Mac on
+2026-09-21. Both images build; the MySQL healthcheck and `service_healthy`
+gating work; every migration applies to real MySQL; nginx serves the PWA and
+proxies `/api/`. 80 backend tests, 29 frontend tests, `vue-tsc` and `vite build`
+clean. Both Phase 8 features were exercised end to end against live MySQL.
 
-**Not proven — do this first.** No container has ever been built and nothing
-has ever run against MySQL, because the environment that wrote this code had
-Docker Hub blocked. The API was exercised on SQLite and the PWA through
-`vite preview`. So on a machine with registry access:
+**Still not proven:**
+
+1. **A real Web Push delivery.** VAPID keys are configured and the scheduler
+   runs, but no browser has ever subscribed. This is the last untested path.
+2. **The Phase 8 PWA in a browser.** The backend is verified through the API;
+   the rebuilt frontend has not been driven in a real browser. Note the Chrome
+   extension used for automation could not reach `localhost` in this
+   environment — the user has to do it by hand.
+
+**Open gaps:** **G29** (no offline cache or write queue). Everything else in the
+register is closed or obsolete.
+
+**Running it:**
 
 ```bash
 cp .env.example .env          # then change the passwords
-docker compose up --build     # first real boot
+docker compose up --build
 curl localhost:8000/healthz   # expect {"status":"ok","database":"ok"}
-open http://localhost:8080    # the app
+open http://localhost:8080    # paste the API token into Settings first
 ```
 
-Watch for these, in likelihood order:
-
-1. **Migration `b2f1c4d7e9a3` on MySQL.** It changes column types, adds NOT NULL
-   constraints, and contains a foreign-key rework guarded to non-SQLite that has
-   never executed. This is the most likely thing to fail.
-2. The MySQL healthcheck command and the `service_healthy` gating.
-3. `frontend/nginx.conf` — the SPA fallback and the `/api/` proxy.
-4. A real Web Push delivery. No push has ever reached a browser endpoint.
-
-**Open gaps:** **G28** (routines have no `start_date`, so the calendar cannot
-tell "did not exist yet" from "missed"; worked around client-side in
-`ProgressView.vue`) and **G29** (no offline cache or write queue). Both are
-written up in PLAN.md. Everything else in the register is closed or obsolete.
+Nothing renders until the bearer token from `.env` is entered in Settings —
+every endpoint but `/healthz` is behind it. An empty screen almost always means
+a missing token rather than a broken deployment.
 
 ## Read these first
 
-1. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D10 in
+1. **[PRODUCT.md](PRODUCT.md)** — who this is for and the design principles any
+   UI work answers to, including the 44px target floor and the anti-references.
+2. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D12 in
    §3 resolve the ambiguities in the original brief. Treat them as settled;
    changing one is a spec change, so update specs.md in the same commit.
-2. **[PLAN.md](PLAN.md)** — the gap register (G1–G29) and the phased plan.
+3. **[PLAN.md](PLAN.md)** — the gap register (G1–G38) and the phased plan.
    This is the source of truth for what is done and what is next.
 
 ## Keeping the docs current
@@ -88,6 +89,22 @@ before it ends.** Specifically:
   `.env.example`, never `.env`.
 * **Migrations, not `create_all`.** Schema changes go through an Alembic
   revision. The container runs `alembic upgrade head` on start.
+* **A routine has a kind** (D11). `scheduled` recurs on weekdays; `tracked` is
+  measured by days elapsed against `target_interval_days`. **Anything that asks
+  "was this due on day X" must exclude tracked routines** — `is_due` already
+  does, and `services.scheduled_only()` exists for the places that filter a list
+  themselves. Forgetting this does not raise: it silently pins every streak at
+  zero (G33).
+* **A routine owns an ordered list of products** (D8a), through
+  `routine_products.position`, and may own none. Read them with
+  `routine.products`, never `routine.product` — that attribute is gone. One
+  check-off still covers the whole routine (D6).
+* **A routine's label is `routine.name`**, which is required. Do not fall back
+  to a product name: a routine may have three products or none.
+* **Replacing a routine's products needs a flush between the delete and the
+  insert.** Assigning a new list straight over the old one makes SQLAlchemy
+  insert first, and a reorder re-inserts product ids that are still there,
+  tripping `uq_routine_products_routine_product`.
 
 ## Commands
 
@@ -116,6 +133,128 @@ traceable.
 
 Newest entries at the top. Each entry records where the session ended so the
 next one can pick up without re-deriving context.
+
+### 2026-09-25 — Mobile design pass
+
+The app is installed to a phone and used one-handed, morning and night, but no
+screen had ever been looked at rendered. Ran the Impeccable design skill over
+the PWA. Register: **product** (design serves the task). Wrote
+[PRODUCT.md](PRODUCT.md) with the users, personality, anti-references and
+accessibility bar, confirmed with the user.
+
+**How it was checked.** The Chrome automation extension cannot reach `localhost`
+in this environment, so the app was driven with headless Chrome through
+`puppeteer-core` instead, at 320 / 390 / 430px in both colour schemes, against a
+**throwaway mock API** rather than the real database — the user was using the
+live app at the time. Everything below was measured in the rendered page.
+
+**The measured defect (G38).** Every touch target was under the 44px minimum:
+buttons 37px, tab-bar links 35px, weekday chips 30px. 24 of 24 controls failing.
+Now 0 of 24, with `--tap` as the floor. Contrast already passed everywhere and
+the existing rose palette was preserved: identity beats regeneration.
+
+**Design changes.**
+
+* **Today** — the product list now spans the full row instead of being boxed
+  into the 55% beside the buttons, where a three-product stack wrapped to three
+  lines. Section headings became real headings with a morning / night / tracking
+  dot, which finally uses the `--morning` and `--night` tokens that had been in
+  the palette unused since Phase 3.
+* **Tracking** — the elapsed count leads at 1.5rem, because it is the question
+  the section exists to answer. `0` and `null` render as "Done today" and "Not
+  recorded yet" rather than a bare figure.
+* **Editor** — grouped into What it is / Products / When; a segmented control
+  instead of two loose pills; the new-product inputs stacked, since three
+  controls in one row truncated both placeholders at 390px; the weekday row is a
+  7-column grid (4 below 360px, where seven 44px chips cannot fit); Save and
+  Cancel ride in a sticky bar above the tab bar instead of sitting below it.
+* **Progress** — the twin big-number streak cards are one sentence. "Hover or
+  focus a day" said hover on a touch device; it now says tap, and taps work.
+  Adherence rows are a divided list rather than a card each.
+* Added focus-visible rings, 150–220ms state transitions, and a
+  `prefers-reduced-motion` path (verified collapsing to ~0s).
+
+**Two bugs the rendering caught that review had not:**
+
+* **A design rule I had broken myself.** The overdue tracker used a coloured
+  `border-left`, the side-stripe pattern. Replaced with a tinted surface; the
+  "Overdue" word carries the state so it never depends on colour alone.
+* **The adherence bars had been invisible.** A stale `.bar-fill` rule left over
+  from the markup it replaced won on order and referenced `--level-3`, a
+  variable scoped to `.viz-root`, which the list is not inside. It resolved to
+  transparent. Reading the CSS would not have shown this; the rendered page did.
+
+**Verified:** 80 backend, 29 frontend, `vue-tsc` and `vite build` clean. No
+horizontal scroll at 320 / 390 / 430px. Rebuilt and redeployed the `web` image.
+
+**Ended at:** branch `phase8-multi-product-tracked`, still uncommitted.
+
+**Next:** unchanged — drive the PWA on a real phone and confirm a push. Then G29.
+A `DESIGN.md` has not been written; `/impeccable document` would generate one
+from the tokens now that the visual system is settled.
+
+### 2026-09-24 — First real run, then Phase 8
+
+Two sessions' worth of work in one: the container stack ran for the first time,
+and the user asked for two features after using it.
+
+**Part 1 — the stack runs.** `docker compose up --build` on the user's Mac, with
+Docker Hub reachable. Everything on the old risk list passed:
+
+* Both images built; `db → healthy → api` gating worked, no race.
+* **Migration `b2f1c4d7e9a3` applied cleanly to MySQL** — the FK rework that had
+  never executed produced exactly the intended schema (`notification_time` as
+  `TIME`, `product_id` NOT NULL, RESTRICT on routines, CASCADE on logs).
+* nginx SPA fallback and the `/api/` proxy both answer 200.
+* D6's upsert is idempotent on MySQL; the `(routine_id, log_date)` unique key
+  holds and a second check-off updates in place rather than 500ing.
+* The midnight trap is handled: forcing the clock to 22:30 UTC (00:30 Madrid)
+  resolved `today_local()` to the next local day, not the UTC one.
+
+Push delivery is still unproven — VAPID keys are configured and the scheduler
+starts, but no browser has subscribed. **The Chrome automation extension could
+not reach `localhost` at all** (requests never arrived at nginx), so every
+browser check in this session had to be done by the user.
+
+**Part 2 — Phase 8.** The user asked for routines made of several products, and
+for routines that are services tracked by elapsed time ("23 days since your last
+haircut"). This is a spec change: **D8 is superseded by D8a**, and **D11** and
+**D12** are new. Decisions taken with the user: one tick per routine regardless
+of product count, a required target interval with overdue push, a Tracking
+section always visible, required routine names, and a two-day repeat for overdue
+reminders.
+
+Two migrations, both round-tripped on SQLite and applied to live MySQL:
+`d4a9f2c1b8e7` (join table, backfill, drop `product_id`) and `e5b1a7d3c9f2`
+(kind, name, target interval, start_date). **No data was lost** — 152 logs before
+and after — and all three downgrade guards fire with readable messages.
+
+Closed **G28** and **G30–G37**. 52 backend tests became 80; 19 frontend became 29.
+
+**Two things worth knowing:**
+
+* **A real bug was caught by a new test, not by review.** Reordering a routine's
+  products tripped the unique constraint, because SQLAlchemy emits the INSERTs
+  before the DELETEs. It needed a `flush()` between them. It would have broken
+  the editor's reorder the first time anyone used it.
+* **G37: the test suite was not hermetic.** Run inside the `api` container it
+  inherited the real VAPID keys from `.env`, so "unconfigured" tests saw a
+  configured app. Green in CI, red on the machine the stack runs on.
+
+**Data note.** Two seeded routines (`Niacinamide Serum — night`, `Gentle
+Cleanser — morning`) and their 47 logs disappeared during the session. Traced
+through the MySQL binary log: two ORM cascade deletes matching exactly the
+`DELETE /routines/{id}` endpoint, after the migration. Not a migration fault and
+not a bug — that endpoint is documented as a hard delete that takes its logs
+with it. Both were seed data created earlier in the same session, so nothing the
+user authored was lost.
+
+**Ended at:** branch `phase8-multi-product-tracked`, all work committed to the
+working tree but **not committed to git and not merged**. Stack running with the
+Phase 8 images.
+
+**Next:** drive the Phase 8 PWA in a browser (Today's Tracking section, the
+ordered product picker, the kind toggle), then a real push on a phone. Then G29.
 
 ### 2026-09-21 — Documentation audit
 
