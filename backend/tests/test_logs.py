@@ -59,3 +59,61 @@ def test_calendar_rejects_an_oversized_range(client, signed_in):
     today = date.today()
     response = client.get(f"/logs/calendar?from={today - timedelta(days=400)}&to={today}")
     assert response.status_code == 422
+
+
+# --- Backdating (recording something that already happened) ---
+
+def test_a_past_date_can_be_recorded(client, signed_in, product):
+    """Seeding history when you start using the app: "my last haircut was..."."""
+    from tests.conftest import make_tracked
+
+    tracked = make_tracked(client, name="Haircut", target_interval_days=35)
+    then = (date.today() - timedelta(days=23)).isoformat()
+    response = client.post(
+        "/logs/", json={"routine_id": tracked["id"], "status": "completed", "log_date": then}
+    )
+    assert response.status_code == 200
+    assert response.json()["log_date"] == then
+
+    entry = client.get("/routines/today").json()["tracking"][0]
+    assert entry["days_since"] == 23
+    assert entry["last_completed"] == then
+
+
+def test_a_future_date_is_rejected(client, signed_in, product):
+    """Otherwise a typo makes "days since" negative, which reads as nonsense."""
+    routine = make_routine(client, product["id"])
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    response = client.post(
+        "/logs/",
+        json={"routine_id": routine["id"], "status": "completed", "log_date": tomorrow},
+    )
+    assert response.status_code == 422
+    assert "future" in response.json()["detail"].lower()
+
+
+def test_today_is_still_allowed(client, signed_in, product):
+    routine = make_routine(client, product["id"])
+    response = client.post(
+        "/logs/",
+        json={
+            "routine_id": routine["id"],
+            "status": "completed",
+            "log_date": date.today().isoformat(),
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_rerecording_the_same_day_replaces_rather_than_duplicates(client, signed_in, product):
+    """D6 still holds for a backdated write, so correcting a date is safe."""
+    routine = make_routine(client, product["id"])
+    then = (date.today() - timedelta(days=5)).isoformat()
+    first = client.post(
+        "/logs/", json={"routine_id": routine["id"], "status": "completed", "log_date": then}
+    ).json()
+    second = client.post(
+        "/logs/", json={"routine_id": routine["id"], "status": "skipped", "log_date": then}
+    ).json()
+    assert first["id"] == second["id"]
+    assert second["status"] == "skipped"

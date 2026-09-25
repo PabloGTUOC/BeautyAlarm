@@ -57,7 +57,7 @@ particularly before exposing the tunnel.
 2. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D14 in
    §3 resolve the ambiguities in the original brief. Treat them as settled;
    changing one is a spec change, so update specs.md in the same commit.
-3. **[PLAN.md](PLAN.md)** — the gap register (G1–G48) and the phased plan.
+3. **[PLAN.md](PLAN.md)** — the gap register (G1–G49) and the phased plan.
    This is the source of truth for what is done and what is next.
 
 ## Keeping the docs current
@@ -117,6 +117,10 @@ before it ends.** Specifically:
   `routine_products.position`, and may own none. Read them with
   `routine.products`, never `routine.product` — that attribute is gone. One
   check-off still covers the whole routine (D6).
+* **A log may be backdated, never postdated.** `POST /logs/` accepts a past
+  `log_date` (that is how a tracked routine records "I last did this on the
+  3rd") and rejects a future one with 422, because `days_since` would go
+  negative and read as nonsense rather than as an error.
 * **Render a product list with `describeProducts()`** from `frontend/src/products.ts`,
   never inline. Today's checklist, the Tracking section and the routine list each
   had their own copy and drifted until two of them were wrong (G48). **A tracked

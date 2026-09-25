@@ -7,6 +7,10 @@ services:
       - "3306:3306"
 
   api:
+    # Adds pytest and friends; the production image has neither.
+    build:
+      context: ./backend
+      target: dev
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     environment:
       # The Vite dev server is a different origin; production is same-origin (D9).

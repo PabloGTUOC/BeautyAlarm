@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import { WEEKDAYS } from '../dates'
+import { WEEKDAYS, toLocalIsoDate } from '../dates'
 import { useRoutinesStore } from '../stores/routines'
 import type { RoutineInput, RoutineKind, TimePeriod } from '../types'
 
@@ -23,6 +23,11 @@ const newBrand = ref('')
 const days = ref<number[]>([1, 2, 3, 4, 5, 6, 7])
 const timePeriod = ref<TimePeriod>('morning')
 const targetInterval = ref<number | ''>(35)
+/** When this was last done, for a tracked routine. Recording it writes a log on
+ *  that date rather than setting a marker: "I had a haircut on the 3rd" is a
+ *  fact about a past occurrence, so it belongs in the history like any other. */
+const lastDone = ref('')
+const lastDoneOnLoad = ref('')
 const notificationTime = ref('')
 const isActive = ref(true)
 const endDate = ref('')
@@ -32,6 +37,8 @@ const saving = ref(false)
 const error = ref<string | null>(null)
 
 const isTracked = computed(() => kind.value === 'tracked')
+/** Today in the device's own zone, so the date picker cannot offer tomorrow. */
+const todayIso = toLocalIsoDate(new Date())
 
 /** Products already added drop out of the picker: the same product cannot
  *  appear twice in one routine. */
@@ -95,6 +102,9 @@ function validate(): string | null {
     if (targetInterval.value === '' || Number(targetInterval.value) < 1) {
       return 'Set how many days between occurrences.'
     }
+    if (lastDone.value && lastDone.value > todayIso) {
+      return 'You cannot have done it in the future.'
+    }
   } else if (days.value.length === 0) {
     return 'Pick at least one day.'
   }
@@ -127,8 +137,16 @@ async function save(): Promise<void> {
       end_date: endDate.value || null
     }
 
-    if (routineId.value !== null) await store.update(routineId.value, payload)
-    else await store.create(payload)
+    const saved =
+      routineId.value !== null
+        ? await store.update(routineId.value, payload)
+        : await store.create(payload)
+
+    // Written after the routine exists, and only when it changed, so editing a
+    // routine for some other reason does not silently re-stamp its history.
+    if (isTracked.value && lastDone.value && lastDone.value !== lastDoneOnLoad.value) {
+      await api.logRoutine(saved.id, 'completed', lastDone.value)
+    }
 
     router.push('/routines')
   } catch (err) {
@@ -152,6 +170,16 @@ onMounted(async () => {
       notificationTime.value = routine.notification_time?.slice(0, 5) ?? ''
       isActive.value = routine.is_active
       endDate.value = routine.end_date ?? ''
+
+      if (routine.kind === 'tracked') {
+        // The tracking section already computes last_completed for every active
+        // tracked routine, so the editor reads it from there rather than
+        // needing its own endpoint.
+        const tracking = (await api.today()).tracking
+        const mine = tracking.find((entry) => entry.routine.id === routine.id)
+        lastDone.value = mine?.last_completed ?? ''
+        lastDoneOnLoad.value = lastDone.value
+      }
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -288,6 +316,15 @@ onMounted(async () => {
         <input v-model.number="targetInterval" type="number" min="1" max="3650" inputmode="numeric" />
         <small class="hint">
           Reminds you once it has been this long, then every other day.
+        </small>
+      </label>
+
+      <label v-if="isTracked" class="field">
+        <span>Last done on (optional)</span>
+        <input v-model="lastDone" type="date" :max="todayIso" />
+        <small class="hint">
+          Set this when you start, so the count is right from day one. Recording
+          it adds it to your history.
         </small>
       </label>
 

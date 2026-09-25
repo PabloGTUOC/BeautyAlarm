@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
@@ -23,3 +23,12 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 # No --reload here: hot reload is a development concern and lives in
 # docker-compose.override.yml.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+# Development image: the production one deliberately carries no test tooling,
+# but installing pytest by hand into a running container loses it on the next
+# rebuild. docker-compose.override.yml targets this stage.
+FROM base AS dev
+
+COPY requirements-dev.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt

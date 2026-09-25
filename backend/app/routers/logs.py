@@ -27,6 +27,15 @@ def upsert_log(
     log_date = payload.log_date or services.today_local()
     timestamp = payload.timestamp or services.utcnow()
 
+    # You cannot already have done something tomorrow. Without this a backdating
+    # typo puts a future date on a tracked routine and "days since" goes
+    # negative, which reads as nonsense rather than as an error.
+    if log_date > services.today_local():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="log_date cannot be in the future",
+        )
+
     log = (
         db.query(models.DailyLog)
         .filter(
