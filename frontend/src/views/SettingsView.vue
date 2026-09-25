@@ -1,20 +1,27 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { api, getToken, setToken } from '../api'
+import { api } from '../api'
+import { useRouter } from 'vue-router'
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../push'
+import { useAuthStore } from '../stores/auth'
 
-const token = ref('')
-const tokenSaved = ref(false)
+const auth = useAuthStore()
+const router = useRouter()
+const signingOut = ref(false)
 const supported = ref(false)
 const subscribed = ref(false)
 const working = ref(false)
 const message = ref<string | null>(null)
 const error = ref<string | null>(null)
 
-function saveToken(): void {
-  setToken(token.value.trim())
-  tokenSaved.value = true
-  setTimeout(() => (tokenSaved.value = false), 2000)
+async function signOut(): Promise<void> {
+  signingOut.value = true
+  try {
+    await auth.logout()
+    router.replace({ name: 'signin' })
+  } finally {
+    signingOut.value = false
+  }
 }
 
 async function refreshSubscription(): Promise<void> {
@@ -58,7 +65,6 @@ async function sendTest(): Promise<void> {
 }
 
 onMounted(async () => {
-  token.value = getToken()
   supported.value = pushSupported()
   if (supported.value) await refreshSubscription()
 })
@@ -73,17 +79,14 @@ onMounted(async () => {
   <p v-if="message" class="banner banner-info">{{ message }}</p>
 
   <div class="card">
-    <h2 style="margin-top: 0">API token</h2>
-    <p class="muted">
-      Stored in this browser only and sent with every request. Leave empty if the
-      server runs without a token.
-    </p>
-    <label class="field">
-      <input v-model="token" type="password" autocomplete="off" placeholder="API_TOKEN" />
-    </label>
-    <button class="btn btn-primary" @click="saveToken">
-      {{ tokenSaved ? 'Saved' : 'Save token' }}
-    </button>
+    <h2 style="margin-top: 0">Account</h2>
+    <p class="who">{{ auth.user?.display_name }}</p>
+    <p class="muted">{{ auth.user?.email }}</p>
+    <div class="actions">
+      <button class="btn" :disabled="signingOut" @click="signOut">
+        {{ signingOut ? 'Signing out…' : 'Sign out' }}
+      </button>
+    </div>
   </div>
 
   <div class="card">
@@ -95,6 +98,7 @@ onMounted(async () => {
     <template v-else>
       <p class="muted">
         {{ subscribed ? 'This device is subscribed.' : 'This device is not subscribed.' }}
+        Reminders for your routines only, never anyone else's.
       </p>
       <div class="actions">
         <button class="btn btn-primary" :disabled="working" @click="toggle">
@@ -107,3 +111,9 @@ onMounted(async () => {
     </template>
   </div>
 </template>
+
+<style scoped>
+.who { margin: 0; font-size: 1.0625rem; font-weight: 600; }
+.card .muted { margin: 0.15rem 0 0; }
+.card .actions { margin-top: 0.875rem; }
+</style>

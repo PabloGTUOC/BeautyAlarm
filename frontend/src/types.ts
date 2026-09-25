@@ -3,6 +3,16 @@ export type LogStatus = 'completed' | 'skipped'
 /** How a routine's due-ness is decided (D11). */
 export type RoutineKind = 'scheduled' | 'tracked'
 
+export interface User {
+  id: number
+  email: string
+  display_name: string
+}
+
+export interface AuthConfig {
+  allow_registration: boolean
+}
+
 export interface Product {
   id: number
   name: string

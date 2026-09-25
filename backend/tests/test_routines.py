@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from tests.conftest import make_routine
 
 
-def test_create_validates_product(client):
+def test_create_validates_product(client, signed_in):
     response = client.post(
         "/routines/",
         json={
@@ -103,7 +103,7 @@ def _product(client, name):
     return client.post("/products/", json={"name": name}).json()
 
 
-def test_routine_holds_several_products_in_order(client):
+def test_routine_holds_several_products_in_order(client, signed_in):
     ha = _product(client, "Hyaluronic Acid")
     pep = _product(client, "Peptides")
     moist = _product(client, "Moisturizer")
@@ -118,7 +118,7 @@ def test_routine_holds_several_products_in_order(client):
     ]
 
 
-def test_product_order_is_preserved_not_sorted(client):
+def test_product_order_is_preserved_not_sorted(client, signed_in):
     """Application order is meaningful: hyaluronic acid goes on before moisturiser."""
     a = _product(client, "Zinc")       # alphabetically last
     b = _product(client, "Azelaic")    # alphabetically first
@@ -126,7 +126,7 @@ def test_product_order_is_preserved_not_sorted(client):
     assert [p["name"] for p in routine["products"]] == ["Zinc", "Azelaic"]
 
 
-def test_products_can_be_reordered_by_patch(client):
+def test_products_can_be_reordered_by_patch(client, signed_in):
     a = _product(client, "First")
     b = _product(client, "Second")
     routine = make_routine(client, product_ids=[a["id"], b["id"]], name="Reorder me")
@@ -151,7 +151,7 @@ def test_a_product_cannot_appear_twice_in_one_routine(client, product):
     assert response.status_code == 422
 
 
-def test_routine_may_have_no_products(client):
+def test_routine_may_have_no_products(client, signed_in):
     """A haircut is an action, not a product application (D8a)."""
     routine = make_routine(client, name="Facial", product_ids=[])
     assert routine["products"] == []
@@ -171,14 +171,14 @@ def test_name_is_required(client, product):
 
 # --- Phase 8: routine kinds (D11, G32) ---
 
-def test_tracked_routine_needs_a_target_interval(client):
+def test_tracked_routine_needs_a_target_interval(client, signed_in):
     response = client.post(
         "/routines/", json={"name": "Haircut", "kind": "tracked", "product_ids": []}
     )
     assert response.status_code == 422
 
 
-def test_tracked_routine_rejects_a_weekday_schedule(client):
+def test_tracked_routine_rejects_a_weekday_schedule(client, signed_in):
     """Silently ignoring the weekdays would leave the user believing they set one."""
     response = client.post(
         "/routines/",
@@ -243,7 +243,7 @@ def test_today_separates_scheduled_from_tracked(client, product):
     assert today["tracking"][0]["routine"]["name"] == "Haircut"
 
 
-def test_today_reports_days_since_the_last_completion(client):
+def test_today_reports_days_since_the_last_completion(client, signed_in):
     from tests.conftest import make_tracked
 
     tracked = make_tracked(client, name="Haircut", target_interval_days=35)
@@ -262,7 +262,7 @@ def test_today_reports_days_since_the_last_completion(client):
     assert entry["last_completed"] == (date.today() - timedelta(days=23)).isoformat()
 
 
-def test_today_flags_an_overdue_tracker(client):
+def test_today_flags_an_overdue_tracker(client, signed_in):
     from tests.conftest import make_tracked
 
     tracked = make_tracked(client, name="Haircut", target_interval_days=35)

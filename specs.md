@@ -5,8 +5,9 @@ revised 2026-09-21) · **Plan:** see [PLAN.md](PLAN.md)
 
 ## 1. Overview
 
-A self-hosted tracker for daily beauty and skincare routines. A user registers
-the products they use, schedules each one to specific days of the week and a
+A self-hosted tracker for daily beauty and skincare routines, shared by a
+household: each person signs in and sees only their own products, routines and
+history (D4a). A user registers the products they use, schedules each one to specific days of the week and a
 time of day, gets a notification when a routine is due, and checks it off. Over
 time the app shows how consistent they have been.
 
@@ -25,11 +26,16 @@ service that delivers notifications.
 * A daily checklist with completed / skipped / pending states that survives a
   reload.
 * A calendar and streak view over the completion history.
-* Single-user, self-hosted deployment behind Cloudflare Tunnel.
+* **Several people in one household, each with their own account and their own
+  data** (D4a). Sign-up, sign-in, sign-out.
+* Self-hosted deployment behind Cloudflare Tunnel.
 
 ### Explicitly out of scope for v1
 
-* Multiple user accounts and sign-up flows (see D4 — the schema leaves room).
+* Roles, permissions, or an admin interface. Every account is equal, and
+  nobody can see anybody else's data.
+* Password reset by email. There is no mail server; a forgotten password is
+  reset with `scripts/create_user.py --reset`.
 * Native iOS/Android applications. The client is an installable PWA (D1a).
 * Product inventory, expiry tracking, shopping lists, photos, ingredient data.
 * **Offline use.** The service worker precaches the app shell, so BeautyAlarm
@@ -48,8 +54,8 @@ not an implementation detail.
 | **D1b** | **Notifications are Web Push (VAPID), driven by a scheduler inside the API.** A service worker receives them; the backend decides when to send. | A PWA cannot schedule its own alarms — the Notification Triggers API never shipped beyond a Chromium origin trial. Web Push is the only mechanism that reaches a closed app, and it is inherently server-driven. **Consequence: reminders require the NAS to be awake and able to reach the browser vendor's push service.** On iOS, push works only once the PWA is added to the home screen (Safari 16.4+). |
 | **D2** | **Weekdays are ISO: 1 = Monday … 7 = Sunday.** Validated at the API; never stored outside 1–7. | Matches JavaScript's `getDay()` only after adjustment (it is 0=Sunday), and Python's `datetime.isoweekday()` exactly. The adjustment happens once, in the client's date helper. Python's `weekday()` is 0-based and must not be used. |
 | **D3** | **`days_of_week` is a JSON array of ints**, not a bitmask. Sorted, unique, non-empty. | Readable in a `mysql` shell and in API responses. A bitmask saves bytes nobody is short of. |
-| **D4** | **Single user.** No `User` table in v1, no login. Every table still carries a nullable `user_id` column so multi-user is an additive change later. | The brief marked multi-user optional. Adding the column now costs nothing; retrofitting it across four tables later costs a migration and a client rewrite. |
-| **D5** | **Auth is a shared bearer token** (`API_TOKEN`), with Cloudflare Access in front of the tunnel as the real gate. | The brief put the API on the public internet with no auth at all. One token is the least machinery that closes that. A token held in browser storage is weak on its own, which is why Access carries the real weight. |
+| **D4a** | *Supersedes D4.* **Several people in one household, each with their own account.** A `users` table; every product, routine, log and push subscription belongs to exactly one user. **Products are per-user**, so each person keeps their own catalogue rather than sharing one. | D4 assumed a single user and reserved a nullable `user_id` on every table precisely so this would be additive. It is: the columns already exist. Per-user products means two people each add their own entry for the same bottle, which is the cost of keeping isolation simple and total. Sharing a catalogue later is a loosening; un-sharing one is not. |
+| **D5a** | *Supersedes D5.* **Auth is a per-user session.** Passwords are hashed with argon2id. Sign-in issues an opaque random token, stored as a hash in a `sessions` table and returned in an `httpOnly`, `SameSite=Lax` cookie. The shared `API_TOKEN` is gone. Cloudflare Access remains the outer perimeter. | A shared token cannot tell two people apart, which is the whole requirement. Sessions are server-side rather than JWT so that signing out actually revokes: with a JWT, "sign out" is a promise the server cannot keep until the token expires. `SameSite=Lax` plus the same-origin deployment (D9) is what stands in for CSRF tokens. |
 | **D6** | **One log row per `(routine_id, log_date)`**, enforced by a unique constraint. `completed` and `skipped` are both explicit user actions; the absence of a row means *pending*. No nightly job backfills skips. | Makes logging idempotent, makes "did I do it today" a lookup rather than a scan, and lets an offline client replay writes safely. |
 | **D7** | **A streak is consecutive local days on which every routine due that day has a `completed` log.** Days with nothing due are neutral: they neither break a streak nor extend it. A `skipped` log breaks it. Today cannot extend a streak while still in progress, but does not break one unless it holds a skip. | "Or streak view" in the brief was unmeasurable. This is computable from the logs alone and matches what a user means by "I didn't miss a day". |
 | **D8a** | *Supersedes D8.* **A routine groups 0..N products in an explicit order**, through a `routine_products` join table carrying `position`. Zero products means the routine is an action or service rather than a product application. **Every routine carries its own required `name`.** | D8 assumed nothing needed a multi-product procedure and predicted this exact change. A layered routine (hyaluronic acid → peptides → moisturiser) is one decision at one time of day, so it is one routine with an ordered product list, not three routines. Order is stored because application order is part of the instruction. The name is required because a routine can no longer borrow a label from a single product: it may have three products or none. |
@@ -57,6 +63,7 @@ not an implementation detail.
 | **D10** | **The scheduler is an asyncio loop inside the API process**, waking every 60 seconds. No extra container, no extra dependency. | Minute granularity is all a skincare reminder needs. It does mean the API must run a **single** worker — two workers would send every notification twice. |
 | **D11** | **A routine has one of two kinds.** `scheduled` recurs on ISO weekdays and is the behaviour of every routine up to now. `tracked` has no weekday schedule: it is measured by the days elapsed since its last `completed` log, against a required `target_interval_days`, and becomes *overdue* once that target is passed. A tracked routine carries no `days_of_week` and no `time_period`. | Some things are appointments, not habits. A haircut is not done on Tuesdays — it is done every five weeks or so, and what the user wants to see is "23 days since your last haircut". Expressing that as a weekday schedule is impossible, and expressing it as a separate feature would duplicate logging, notifications and history. One `kind` column on `routines` reuses all of it. |
 | **D12** | **Tracked routines are excluded from streaks (D7) and from adherence.** Both are scoped to `kind='scheduled'`. An overdue tracked routine notifies at its `notification_time` and then **re-notifies every second day** while it stays overdue. | D7 asks whether every routine *due* that day is completed. A tracked routine is not due on any particular day, so including it would score every single day as broken and pin the streak at zero permanently. The two-day cadence is the compromise between a reminder that is easy to miss once and one that nags daily until dismissed. |
+| **D14** | **Registration is open, but gated by `ALLOW_REGISTRATION` and rate limited.** Anyone who can reach the login page may create an account while the flag is on. | The household should be able to sign itself up without the owner running a command for each person. The flag exists because the app is designed to sit behind a public tunnel: once everyone is in, closing registration turns an open door back into a wall. Cloudflare Access is what makes open registration defensible in the meantime. |
 
 ## 4. Conventions
 
@@ -78,7 +85,33 @@ not an implementation detail.
 
 ## 5. Data model
 
-All tables carry a nullable `user_id INT` per D4, unused in v1.
+Every domain table carries `user_id INT` referencing `users.id` (D4a). It is the
+column that keeps two people in the same house apart, and **every query filters
+on it**.
+
+### `users`
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INT PK | |
+| `email` | VARCHAR(255) NOT NULL UNIQUE | stored lower-cased; the sign-in identifier |
+| `display_name` | VARCHAR(100) NOT NULL | shown in Settings, never to anyone else |
+| `password_hash` | VARCHAR(255) NOT NULL | argon2id (D5a) |
+| `is_active` | BOOL NOT NULL DEFAULT TRUE | a disabled account cannot sign in; its data stays |
+| `created_at` | DATETIME NOT NULL | UTC |
+| `last_login_at` | DATETIME NULL | UTC |
+
+### `sessions`
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INT PK | |
+| `user_id` | INT NOT NULL FK → `users.id` | `ON DELETE CASCADE` |
+| `token_hash` | CHAR(64) NOT NULL UNIQUE | SHA-256 of the cookie value; the raw token is never stored |
+| `created_at` | DATETIME NOT NULL | UTC |
+| `expires_at` | DATETIME NOT NULL | UTC; expired rows are refused and swept |
+| `last_seen_at` | DATETIME NOT NULL | UTC; lets Settings list devices |
+
+The raw token exists only in the cookie. A database leak therefore yields no
+usable sessions, the same reason passwords are hashed.
 
 ### `products`
 | Column | Type | Notes |
@@ -142,11 +175,19 @@ require temporary values to dodge the constraint, for no benefit.
 
 ## 6. API
 
-All routes require `Authorization: Bearer $API_TOKEN` except `/healthz` (D5).
+All routes require a valid session cookie except `/healthz`, `/auth/login` and
+`/auth/register` (D5a). A request without one gets **401**; the client redirects
+to the sign-in screen. Every authenticated route is scoped to the signed-in
+user: another user's id is **404**, never 403, so the API does not confirm that
+someone else's routine exists.
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/healthz` | liveness + DB reachability; unauthenticated |
+| POST | `/auth/register` | create an account and sign in; 403 when `ALLOW_REGISTRATION` is off (D14) |
+| POST | `/auth/login` | sign in; sets the session cookie |
+| POST | `/auth/logout` | revoke this session server-side and clear the cookie |
+| GET | `/auth/me` | the signed-in user, or 401 |
 | GET/POST | `/products/` | list (excludes archived by default) / create |
 | GET/PATCH/DELETE | `/products/{id}` | fetch / partial update / archive |
 | GET/POST | `/routines/` | list / create |
@@ -177,7 +218,8 @@ scheduled routines due today, and a `tracking` list carrying every active
 tracked routine with its `last_completed`, `days_since` and `overdue` flag.
 
 Referencing a missing `product_id` or `routine_id` returns **404**, never a 500
-from a foreign-key violation. Creating or updating a routine with fields that
+from a foreign-key violation. Referencing one that belongs to somebody else
+returns **404** for the same reason. Creating or updating a routine with fields that
 contradict its `kind` — weekdays on a tracked routine, a target interval on a
 scheduled one — returns **422**.
 
@@ -255,15 +297,24 @@ documented restore path.
 
 ## 9. Security
 
-* Bearer token on every route but `/healthz` (D5), plus Cloudflare Access. The
-  token lives in browser storage, so Access is what actually keeps strangers
-  out; the token stops an accidentally-open tunnel from being trivially usable.
-* Same-origin in production (D9), so CORS is not part of the production path.
-  `CORS_ORIGINS` / `CORS_ORIGIN_REGEX` exist for the Vite dev server only.
-* VAPID private key comes from the environment and is never sent to the client.
-* No credentials in the repo. `.env` is git-ignored; `.env.example` documents
-  the keys.
-* The database port is never published outside the compose network.
+* **Per-user sessions** (D5a) on every route but `/healthz` and the two auth
+  endpoints, plus Cloudflare Access in front of the tunnel.
+* **Passwords** are hashed with argon2id. They are never logged, never returned,
+  and never stored in reversible form.
+* **Session tokens** are 256 bits from `secrets.token_urlsafe`, stored only as a
+  SHA-256 hash. The cookie is `httpOnly` (so no script can read it), `SameSite=Lax`
+  (which is what stands in for CSRF tokens, given the same-origin deployment in
+  D9) and `Secure` whenever the app is served over HTTPS.
+* **Sign-in failures are uniform.** A wrong password and an unknown address
+  produce the same message and the same timing, so the endpoint cannot be used
+  to discover who has an account.
+* **Isolation is enforced per query, not per route.** Every read and write
+  filters on `user_id`. This is the failure mode with no symptom: a missing
+  filter shows one person another's data and raises nothing, so it is covered by
+  a dedicated cross-user test suite rather than by review.
+* **Registration** is open while `ALLOW_REGISTRATION` is on and rate limited by
+  client address (D14). Turn it off once the household has signed up.
+
 
 ## 10. Open questions
 

@@ -54,17 +54,51 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 
+def register(client, email="test@example.com", password="correct-horse-battery",
+             display_name="Test"):
+    """Create an account and sign in as it. Returns the user payload."""
+    response = client.post(
+        "/auth/register",
+        json={"email": email, "password": password, "display_name": display_name},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def sign_in(client, email="test@example.com", password="correct-horse-battery"):
+    """Switch the client to an existing account."""
+    response = client.post("/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """The auth limiter is process state and would leak across tests."""
+    from app.auth import reset_rate_limits
+
+    reset_rate_limits()
+    yield
+    reset_rate_limits()
+
+
 @pytest.fixture
-def auth_client(client, monkeypatch):
-    """A client against an API that requires a bearer token."""
-    monkeypatch.setenv("API_TOKEN", "test-token")
+def signed_in(client):
+    """The default for tests that care about data, not about auth."""
+    return register(client)
+
+
+@pytest.fixture
+def push_keys(monkeypatch):
+    monkeypatch.setenv("VAPID_PUBLIC_KEY", "test-public")
+    monkeypatch.setenv("VAPID_PRIVATE_KEY", "test-private")
     get_settings.cache_clear()
-    yield client
+    yield
     get_settings.cache_clear()
 
 
 @pytest.fixture
-def product(client):
+def product(client, signed_in):
     response = client.post("/products/", json={"name": "Retinol", "brand": "CeraVe"})
     assert response.status_code == 201
     return response.json()

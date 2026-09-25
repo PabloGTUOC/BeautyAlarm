@@ -20,8 +20,14 @@ DEAD_STATUSES = {404, 410}
 TTL_SECONDS = 3600
 
 
-def send_to_all(db: Session, title: str, body: str, url: str = "/") -> int:
-    """Push a notification to every registered subscription.
+def send_to_user(
+    db: Session, user_id: int, title: str, body: str, url: str = "/"
+) -> int:
+    """Push to one person's devices only (D4a).
+
+    There is deliberately no send-to-everyone helper: in a household, a function
+    that fans out to every subscription in the table is a bug waiting to be
+    called, and it would put one person's reminders on another's phone.
 
     Returns the number delivered. Dead subscriptions are deleted as they are
     found, so the table cleans itself up without a separate job.
@@ -34,7 +40,10 @@ def send_to_all(db: Session, title: str, body: str, url: str = "/") -> int:
     payload = json.dumps({"title": title, "body": body, "url": url})
     delivered = 0
 
-    for subscription in db.query(PushSubscription).all():
+    subscriptions = (
+        db.query(PushSubscription).filter(PushSubscription.user_id == user_id).all()
+    )
+    for subscription in subscriptions:
         try:
             webpush(
                 subscription_info={

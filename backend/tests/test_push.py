@@ -13,16 +13,18 @@ from app.models import (
     TimePeriod,
 )
 from app.scheduler import routines_due_at, tracked_overdue_at
-from tests.conftest import make_routine
+from tests.conftest import make_routine, register
 
 MONDAY = date(2026, 9, 21)
 
 
 @pytest.fixture
 def push_client(client, monkeypatch):
+    """A signed-in client with push configured: every push route needs both."""
     monkeypatch.setenv("VAPID_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("VAPID_PRIVATE_KEY", "test-private")
     get_settings.cache_clear()
+    register(client)
     yield client
     get_settings.cache_clear()
 
@@ -33,7 +35,7 @@ SUBSCRIPTION = {
 }
 
 
-def test_public_key_unavailable_until_configured(client):
+def test_public_key_unavailable_until_configured(client, signed_in):
     assert client.get("/push/public-key").status_code == 503
 
 

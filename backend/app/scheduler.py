@@ -10,15 +10,16 @@ notification twice.
 
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import date, datetime, time
-from typing import List
+from typing import Dict, List
 
 from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .database import SessionLocal
 from .models import DailyLog, LogStatus, Routine, RoutineKind
-from .push import send_to_all
+from .push import send_to_user
 from .services import app_timezone, due_on, tracker_state
 
 logger = logging.getLogger("uvicorn.error")
@@ -97,12 +98,18 @@ def dispatch(minute: datetime) -> int:
         delivered = 0
         day, at = minute.date(), minute.time()
 
-        routines = routines_due_at(db, day, at)
-        if routines:
+        # Grouped by owner: everyone in the house is on their own schedule, and
+        # each person's reminder goes only to their own devices (D4a).
+        by_user: Dict[int, List[Routine]] = defaultdict(list)
+        for routine in routines_due_at(db, day, at):
+            by_user[routine.user_id].append(routine)
+
+        for user_id, routines in by_user.items():
             period = routines[0].time_period.value
             names = ", ".join(r.name for r in routines)
-            delivered += send_to_all(
+            delivered += send_to_user(
                 db,
+                user_id,
                 title=f"Time for your {period} routine",
                 body=names or f"{len(routines)} routine(s) due",
                 url="/",
@@ -115,8 +122,9 @@ def dispatch(minute: datetime) -> int:
                 DailyLog.routine_id == routine.id,
                 DailyLog.status == LogStatus.completed,
             ).all(), day)
-            delivered += send_to_all(
+            delivered += send_to_user(
                 db,
+                routine.user_id,
                 title=f"{routine.name} is overdue",
                 body=f"{days_since} days since the last one "
                      f"(target: every {routine.target_interval_days}).",

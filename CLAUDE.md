@@ -10,8 +10,14 @@ an installable Vue PWA on the phone, Cloudflare Tunnel between them. See
 
 ## Current state (2026-09-24)
 
-Phases 0–8 are complete. Phase 8 (multi-product routines and tracked services)
-is on the branch `phase8-multi-product-tracked`, **not yet merged to `main`**.
+Phases 0–9 are complete. Phase 8 (multi-product routines, tracked services) and
+Phase 9 (household accounts) are on `phase8-multi-product-tracked` and
+`phase9-household-accounts`, **neither merged to `main`**.
+
+**This is a multi-user app now.** Every row belongs to an account, and every
+query filters on `user_id`. A missing filter leaks one housemate's data to
+another with no error, so anything touching a query belongs in
+`tests/test_multiuser.py`.
 
 **Proven on real hardware.** The stack was built and run on the user's Mac on
 2026-09-21. Both images build; the MySQL healthcheck and `service_healthy`
@@ -28,8 +34,8 @@ clean. Both Phase 8 features were exercised end to end against live MySQL.
    extension used for automation could not reach `localhost` in this
    environment — the user has to do it by hand.
 
-**Open gaps:** **G29** (no offline cache or write queue). Everything else in the
-register is closed or obsolete.
+**Open gaps:** **G29** (offline), **G46** (`user_id` still nullable) and **G47**
+(an account cannot be deleted). Everything else is closed or obsolete.
 
 **Running it:**
 
@@ -40,18 +46,18 @@ curl localhost:8000/healthz   # expect {"status":"ok","database":"ok"}
 open http://localhost:8080    # paste the API token into Settings first
 ```
 
-Nothing renders until the bearer token from `.env` is entered in Settings —
-every endpoint but `/healthz` is behind it. An empty screen almost always means
-a missing token rather than a broken deployment.
+The app opens on a sign-in screen; create an account there. Registration is open
+while `ALLOW_REGISTRATION` is on — turn it off once everyone has signed up,
+particularly before exposing the tunnel.
 
 ## Read these first
 
 1. **[PRODUCT.md](PRODUCT.md)** — who this is for and the design principles any
    UI work answers to, including the 44px target floor and the anti-references.
-2. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D12 in
+2. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D14 in
    §3 resolve the ambiguities in the original brief. Treat them as settled;
    changing one is a spec change, so update specs.md in the same commit.
-3. **[PLAN.md](PLAN.md)** — the gap register (G1–G39) and the phased plan.
+3. **[PLAN.md](PLAN.md)** — the gap register (G1–G47) and the phased plan.
    This is the source of truth for what is done and what is next.
 
 ## Keeping the docs current
@@ -89,6 +95,18 @@ before it ends.** Specifically:
   `.env.example`, never `.env`.
 * **Migrations, not `create_all`.** Schema changes go through an Alembic
   revision. The container runs `alembic upgrade head` on start.
+* **Every query is scoped to the signed-in user** (D4a). `Depends(current_user)`
+  only proves somebody is signed in; it does not prove the row they asked for is
+  theirs. Reads filter on `user_id`, and single-row fetches go through
+  `auth.owned_or_404`, which returns 404 rather than 403 so the API never
+  confirms that someone else's row exists. **This failure is silent**, so new
+  endpoints get a case in `tests/test_multiuser.py`.
+* **Push is per-user.** Use `push.send_to_user`. There is deliberately no
+  send-to-everyone helper: in a household it would put one person's reminders on
+  another's phone.
+* **A constraint migration must not be able to fail in the boot path.** The
+  container runs `alembic upgrade head` on start, so a revision that refuses on
+  real data takes the API down and can deadlock recovery (see G46).
 * **A routine has a kind** (D11). `scheduled` recurs on weekdays; `tracked` is
   measured by days elapsed against `target_interval_days`. **Anything that asks
   "was this due on day X" must exclude tracked routines** — `is_due` already
@@ -133,6 +151,69 @@ traceable.
 
 Newest entries at the top. Each entry records where the session ended so the
 next one can pick up without re-deriving context.
+
+### 2026-09-25 — Household accounts (Phase 9)
+
+The app was single-user with one shared `API_TOKEN`. It now has real accounts,
+because several people at home need their own routines. **D4 becomes D4a**,
+**D5 becomes D5a**, and **D14** is new.
+
+**On the Firebase question.** Web Push already runs on FCM's infrastructure:
+when Chrome subscribes, the endpoint it returns is `fcm.googleapis.com/...`. It
+is reached through the open protocol (RFC 8030 + VAPID RFC 8292) with this
+deployment's own keys, no Firebase project and no SDK. Adding Firebase would
+have replaced a working standards-based path with a cloud dependency, in an app
+whose point is running on the household's own hardware. Firebase Auth was
+declined for the same reason: a Google round trip to sign in to a box on your
+own LAN. The only notification change was making delivery per-user.
+
+**What was built.** `users` and `sessions` tables; argon2id passwords; opaque
+session tokens stored only as SHA-256, in an httpOnly `SameSite=Lax` cookie;
+`/auth/register`, `/login`, `/logout`, `/me`, `/config`; a sign-in screen, route
+guard and auth store; the API-token field in Settings replaced by Account and
+Sign out. Migration `a7e2d64c1b93` turns the `user_id` columns D4 reserved back
+in Phase 2 into real foreign keys, which is the only reason this was additive.
+
+**The risk was scoping, not authentication.** A login is obvious when it breaks;
+a missing `user_id` filter is not, and quietly serves one housemate another's
+data. `tests/test_multiuser.py` walks every resource with two accounts, and was
+verified by deleting a single filter and confirming it fails. It earned its keep
+immediately: `delete_log` depended on `current_user`, which only proves somebody
+is signed in, then fetched the row by id with no ownership check. Anyone signed
+in could have deleted anyone's check-off.
+
+**A migration that bricked the boot, and the fix.** A second revision made
+`user_id` NOT NULL. The container runs `alembic upgrade head` on start, so on a
+database holding pre-Phase-9 rows it refused, the API would not come up, and
+nobody could register to adopt those rows — a deadlock of my own making. The
+revision was removed. Ownership is enforced in the application instead, and the
+tightening is deferred to **G46**. The lesson worth keeping: **a constraint
+migration that can fail on real data must not sit in a boot-time upgrade path.**
+
+**Verified against live MySQL:** two accounts registered through the API; each
+invisible to the other on products, routines, logs, today, streak, adherence and
+calendar; cross-account reads and writes all 404; sign-out revoking server-side
+so a replayed cookie is worthless. 103 backend tests (was 80) and 44 frontend
+(was 36). The test accounts were removed afterwards; your 8 products are intact.
+
+**Found while cleaning up (G47): an account cannot be deleted.** `users →
+products` cascades, but `routine_products.product_id` is `ON DELETE RESTRICT`
+(D8a), and the two rules collide. Nothing is broken today because there is no
+delete-account endpoint, but the topology is wrong.
+
+**Your database needs one decision.** There are 8 products with no owner, left
+from seeding before accounts existed. They are invisible to every account rather
+than shared. Either claim them after registering:
+
+    docker compose exec api python scripts/create_user.py --adopt-to you@example.com
+
+or leave them; they harm nothing.
+
+**Ended at:** branch `phase9-household-accounts`, committed. Registration is
+**open** — turn `ALLOW_REGISTRATION` off once the household has signed up,
+especially before starting the `tunnel` profile.
+
+**Next:** G46, G47, then a real push on a phone, now that it is per-user.
 
 ### 2026-09-25 — UX critique, and the three states nobody had looked at
 

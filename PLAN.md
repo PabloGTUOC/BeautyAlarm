@@ -18,6 +18,7 @@ and referenced from commit messages and [CLAUDE.md](CLAUDE.md).
 | 6 | Infra hardening | G17, G18, G20, G27 | ✅ Done† |
 | 7 | Tests and CI | G22 | ✅ Done |
 | 8 | Multi-product routines and tracked services | G28, G30–G39 | ✅ Done§ |
+| 9 | Household accounts | G40–G45 | ✅ Done¶ |
 
 † Resolved on 2026-09-21: the stack was built and run on the user's machine.
 Both images build, the MySQL healthcheck and `service_healthy` gating work, all
@@ -35,7 +36,10 @@ were exercised end to end through the API. The UI was reviewed and measured in a
 headless browser across five states, three widths and both colour schemes; it
 has not been driven on a real phone.
 
-**Open gaps: G29.** Everything else is closed or obsolete.
+¶ Verified against live MySQL: two accounts registered through the API, each
+invisible to the other across every endpoint, sign-out revoking server-side.
+
+**Open gaps: G29, G46, G47.** Everything else is closed or obsolete.
 
 ## Gap register
 
@@ -114,6 +118,19 @@ some gaps by deletion and made one obsolete.
 | **G38** | **Every touch target was below the 44px minimum**, measured on a 390px viewport: buttons 37px, tab-bar links 35px, weekday chips 30px — 24 of 24 controls failing, in an app used one-handed and half-awake. Found by measuring the rendered PWA, not by reading the CSS. | ✅ Phase 8 — `--tap` floor applied to every control; 0 of 24 failing, verified in both themes at 320/390/430px |
 | **G39** | **The Today view's three non-happy states were never designed or rendered.** Finishing every routine produced a void: struck-through rows and empty space, no acknowledgement, and the streak hidden on another tab. A failed load showed the raw server string over a blank screen with no retry. The empty state told a user with six routines to "add a routine to get started" on a rest day, and offered no control to do it with. All three were found by stubbing states, not by reading code. | ✅ Phase 8 — completion state carrying the streak, plain-language error with a retry, and an empty state that tells first run apart from a rest day |
 | **G37** | **The test suite was not hermetic.** `conftest.py` set `DATABASE_URL`, `APP_TIMEZONE` and `API_TOKEN` but not the VAPID pair, so running it inside the `api` container inherited the deployment's real keys from `.env`: "unconfigured" tests saw a configured app and the scheduler started against a database the fixtures never created. Green in CI, red on the machine the stack runs on. | ✅ Phase 8 — `conftest.py` clears both VAPID keys |
+
+### Phase 9 — household accounts (2026-09-25)
+
+| ID | Gap | Status |
+|---|---|---|
+| **G40** | **One shared API token could not tell two people apart.** The whole app was single-user: one token in browser storage, no accounts, no sign-in. | ✅ Phase 9 — `users` table, argon2id passwords, `/auth/register`, `/auth/login`, `/auth/logout`, `/auth/me` (D5a) |
+| **G41** | **No sessions.** Nothing to revoke, nothing to expire, nothing to sign out of. | ✅ Phase 9 — server-side `sessions` table, opaque token stored only as a SHA-256, httpOnly `SameSite=Lax` cookie, swept on expiry |
+| **G42** | **Every query was unscoped.** With accounts added but filters missing, one housemate would silently see another's products, routines, logs and streaks. No error, just wrong rows. | ✅ Phase 9 — every read and write filters on `user_id`, plus `tests/test_multiuser.py`, which was verified to fail when a single filter is removed |
+| **G43** | **Push went to every device in the house.** `send_to_all` fanned out across the whole subscription table, so one person's reminder would buzz everyone's phone. | ✅ Phase 9 — `send_to_user` only; the scheduler groups due routines by owner. There is deliberately no send-to-everyone helper left to call by mistake |
+| **G44** | **No sign-in UI**, and Settings asked for a raw API token. | ✅ Phase 9 — sign-in/register screen, route guard, auth store, and an Account section with sign-out |
+| **G45** | **Open registration on a publicly tunnelled app** is an open door. | ✅ Phase 9 — `ALLOW_REGISTRATION` flag and per-address rate limiting (D14); Cloudflare Access remains the perimeter |
+| **G46** | **`user_id` is nullable**, so a row with no owner is representable. It is invisible and unreachable, because every query filters on the column, but the database does not forbid it. A NOT NULL migration was written and then removed: the container runs `alembic upgrade head` on boot, so it refused to start on a database with pre-Phase-9 rows, and the API could not come up until somebody registered, which they could not do while it was down. | ⬜ **Open** — tighten to NOT NULL in a later revision, once deployments have run `create_user.py --adopt-to` |
+| **G47** | **An account cannot be deleted.** `users → products` cascades, but `routine_products.product_id` is `ON DELETE RESTRICT` (D8a, so a product in use cannot be hard-deleted), and the two rules collide: MySQL refuses the delete. Found while removing test accounts from the live database. There is no delete-account endpoint yet, so nothing is broken today, but the topology is wrong and will bite the first time somebody leaves the household. | ⬜ **Open** — delete a user's routines before their products, in an ordered application-level operation |
 
 ## Phases
 
@@ -204,9 +221,35 @@ validation, `is_due`/streak/adherence scoping. 4. `/routines/today` tracking.
 5. Frontend. 6. Scheduler. 7. Docs and session log. Steps 2 and 3 each keep the
 52 backend tests passing; step 5 updates the 19 frontend ones.
 
+### Phase 9 — Household accounts ✅ *(G40–G45)*
+
+Locked as **D4a**, **D5a** and **D14** in [specs.md](specs.md). Migration
+`a7e2d64c1b93` adds `users` and `sessions` and turns the `user_id` columns D4
+reserved in Phase 2 into real foreign keys, which is why this was additive
+rather than a rewrite.
+
+Products are per-user, so each person keeps their own catalogue. Sessions are
+server-side rather than JWT so sign-out genuinely revokes. Registration is open
+behind `ALLOW_REGISTRATION` and rate limiting.
+
+**The dangerous part was scoping, not authentication.** Adding a login is
+visible when it breaks; forgetting a `user_id` filter is not, and shows one
+housemate another's data with no error. `tests/test_multiuser.py` walks every
+resource with two accounts, and was itself verified by removing one filter and
+confirming it fails. It caught a real leak during the work: `delete_log` took
+the `current_user` dependency, which only proves somebody is signed in, and then
+fetched the row by id without checking who owned it.
+
+**Notifications did not need Firebase.** Web Push already reaches Chrome through
+FCM's own infrastructure using the vendor-neutral protocol and the deployment's
+own VAPID keys, so adding the Firebase SDK would have replaced a working
+standards-based path with a cloud dependency, in an app whose point is running
+on the household's own hardware. The change here was only to make delivery
+per-user.
+
 ## Next
 
-1. **Phase 8**, in the order above.
-2. **G29** — cache the checklist response and queue writes while offline.
-3. Confirm a real push arrives on a phone. The stack itself is now verified on
-   real hardware; only push delivery remains unproven.
+1. **G46** — tighten `user_id` to NOT NULL once deployments have adopted.
+2. **G47** — make account deletion possible; the FK topology currently forbids it.
+3. **G29** — cache the checklist response and queue writes while offline.
+4. Confirm a real push arrives on a phone, now that it is per-user.

@@ -14,9 +14,17 @@ class Settings(BaseSettings):
     # this single timezone (D4 — one deployment, one user, one timezone).
     app_timezone: str = "UTC"
 
-    # Shared bearer token (D5). Empty disables authentication entirely, which is
-    # only acceptable on a development machine; main.py warns loudly at startup.
-    api_token: str = ""
+    # --- Accounts and sessions (D5a) ---
+    # How long a sign-in lasts. Household phones, so long by default.
+    session_ttl_days: int = 30
+    # Set Secure on the session cookie. Off for plain-http localhost development;
+    # on for any real deployment, which is served over HTTPS through the tunnel.
+    cookie_secure: bool = False
+    # Open registration (D14). Turn off once the household has signed up.
+    allow_registration: bool = True
+    # Sign-in and sign-up attempts allowed per client address per window.
+    auth_rate_limit: int = 10
+    auth_rate_window_seconds: int = 300
 
     # Production is same-origin behind nginx (D9), so these exist for the Vite
     # dev server only.
@@ -38,9 +46,6 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> List[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
-    @property
-    def auth_enabled(self) -> bool:
-        return bool(self.api_token)
 
     @property
     def push_enabled(self) -> bool:

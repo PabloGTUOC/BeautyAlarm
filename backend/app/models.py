@@ -41,6 +41,43 @@ class LogStatus(str, enum.Enum):
     skipped = "skipped"
 
 
+class User(Base):
+    """A person in the household (D4a). Every domain row belongs to exactly one."""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Stored lower-cased so sign-in is not case sensitive.
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    display_name = Column(String(100), nullable=False)
+    # argon2id (D5a). Never logged, never returned.
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=sa.text("1"))
+    created_at = Column(DateTime, nullable=False)
+    last_login_at = Column(DateTime, nullable=True)
+
+
+class Session(Base):
+    """A signed-in browser (D5a).
+
+    Only the SHA-256 of the cookie value is stored, so a database leak yields no
+    usable sessions. Server-side rows are what make sign-out actually revoke.
+    """
+
+    __tablename__ = "sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    last_seen_at = Column(DateTime, nullable=False)
+
+    user = relationship("User")
+
+
 class Product(Base):
     __tablename__ = "products"
 
@@ -50,8 +87,11 @@ class Product(Base):
     notes = Column(String(1000), nullable=True)
     # Soft delete: archived products keep their history and drop out of pickers.
     archived_at = Column(DateTime, nullable=True)
-    # Reserved for multi-user (D4). Unused in v1.
-    user_id = Column(Integer, nullable=True)
+    # Owner (D4a). Nullable only until scripts/create_user.py adopts pre-Phase-9
+    # rows; migration f1c8a3d95e47 makes it NOT NULL.
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
 
     # Membership rows, not routines: a product reaches its routines through the
     # join table so the ordering lives in one place (D8a).
@@ -115,7 +155,9 @@ class Routine(Base):
     notification_time = Column(Time, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default=sa.text("1"))
     end_date = Column(Date, nullable=True)
-    user_id = Column(Integer, nullable=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
 
     product_links = relationship(
         "RoutineProduct",
@@ -154,7 +196,9 @@ class DailyLog(Base):
     # UTC instant the user acted.
     timestamp = Column(DateTime, nullable=False)
     status = Column(Enum(LogStatus), nullable=False)
-    user_id = Column(Integer, nullable=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
 
     routine = relationship("Routine", back_populates="logs")
 
@@ -172,4 +216,8 @@ class PushSubscription(Base):
     # Set when a send fails transiently. A 404 or 410 deletes the row instead:
     # the browser has thrown the subscription away and it will never work again.
     last_failure_at = Column(DateTime, nullable=True)
-    user_id = Column(Integer, nullable=True)
+    # Which person's phone this is. The scheduler sends each user's reminders
+    # only to their own devices.
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )

@@ -17,7 +17,7 @@ def test_upsert_is_idempotent_per_day(client, product):
     assert len(client.get("/logs/").json()) == 1
 
 
-def test_log_for_missing_routine_is_404(client):
+def test_log_for_missing_routine_is_404(client, signed_in):
     assert client.post("/logs/", json={"routine_id": 999, "status": "completed"}).status_code == 404
 
 
@@ -30,7 +30,7 @@ def test_delete_log_returns_routine_to_pending(client, product):
     assert client.get("/routines/today").json()["entries"][0]["log"] is None
 
 
-def test_delete_missing_log_is_404(client):
+def test_delete_missing_log_is_404(client, signed_in):
     assert client.delete("/logs/999").status_code == 404
 
 
@@ -49,13 +49,13 @@ def test_calendar_counts_against_due_routines(client, product):
     assert days[1] == {"date": today.isoformat(), "due": 1, "completed": 0, "skipped": 0}
 
 
-def test_calendar_rejects_a_backwards_range(client):
+def test_calendar_rejects_a_backwards_range(client, signed_in):
     today = date.today()
     response = client.get(f"/logs/calendar?from={today}&to={today - timedelta(days=1)}")
     assert response.status_code == 422
 
 
-def test_calendar_rejects_an_oversized_range(client):
+def test_calendar_rejects_an_oversized_range(client, signed_in):
     today = date.today()
     response = client.get(f"/logs/calendar?from={today - timedelta(days=400)}&to={today}")
     assert response.status_code == 422

@@ -1,4 +1,5 @@
 import type {
+  AuthConfig,
   CalendarDay,
   DailyLog,
   LogStatus,
@@ -7,34 +8,17 @@ import type {
   RoutineInput,
   RoutineAdherence,
   Streak,
-  TodayResponse
+  TodayResponse,
+  User
 } from './types'
 
 /** Same-origin in production behind nginx (D9); the Vite dev server proxies it. */
 const BASE = '/api'
-const TOKEN_KEY = 'beautyalarm.token'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message)
     this.name = 'ApiError'
-  }
-}
-
-export function getToken(): string {
-  try {
-    return localStorage.getItem(TOKEN_KEY) ?? ''
-  } catch {
-    return '' // private mode, blocked storage
-  }
-}
-
-export function setToken(token: string): void {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token)
-    else localStorage.removeItem(TOKEN_KEY)
-  } catch {
-    /* nothing we can do; requests will simply be unauthenticated */
   }
 }
 
@@ -52,16 +36,29 @@ function errorMessage(status: number, body: string): string {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body) headers.set('Content-Type', 'application/json')
-  const token = getToken()
-  if (token) headers.set('Authorization', `Bearer ${token}`)
 
-  const response = await fetch(`${BASE}${path}`, { ...init, headers })
+  // The session lives in an httpOnly cookie (D5a), which scripts cannot read;
+  // it only has to be sent. Same-origin behind nginx (D9).
+  const response = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers,
+    credentials: 'same-origin'
+  })
   const body = response.status === 204 ? '' : await response.text()
   if (!response.ok) throw new ApiError(response.status, errorMessage(response.status, body))
   return (body ? JSON.parse(body) : undefined) as T
 }
 
 export const api = {
+  // Auth (D5a)
+  register: (data: { email: string; password: string; display_name: string }) =>
+    request<User>('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+  login: (data: { email: string; password: string }) =>
+    request<User>('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+  logout: () => request<void>('/auth/logout', { method: 'POST' }),
+  me: () => request<User>('/auth/me'),
+  authConfig: () => request<AuthConfig>('/auth/config'),
+
   // Products
   listProducts: () => request<Product[]>('/products/'),
   createProduct: (data: { name: string; brand?: string | null; notes?: string | null }) =>

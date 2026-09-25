@@ -1,4 +1,4 @@
-def test_create_and_read(client):
+def test_create_and_read(client, signed_in):
     created = client.post("/products/", json={"name": "Niacinamide", "brand": "The Ordinary"})
     assert created.status_code == 201
     product_id = created.json()["id"]
@@ -8,11 +8,11 @@ def test_create_and_read(client):
     assert fetched.json()["name"] == "Niacinamide"
 
 
-def test_blank_name_rejected(client):
+def test_blank_name_rejected(client, signed_in):
     assert client.post("/products/", json={"name": ""}).status_code == 422
 
 
-def test_missing_product_is_404(client):
+def test_missing_product_is_404(client, signed_in):
     assert client.get("/products/999").status_code == 404
 
 

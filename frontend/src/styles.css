@@ -108,6 +108,9 @@ button { font: inherit; cursor: pointer; }
   padding: 1rem 1rem calc(var(--nav-h) + 1.5rem + env(safe-area-inset-bottom));
 }
 
+/* Signed out there is no tab bar, so the space it reserves would be a gap. */
+.app.no-nav { padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
+
 .app-header {
   display: flex;
   align-items: baseline;

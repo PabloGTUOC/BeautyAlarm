@@ -5,19 +5,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas, services
-from ..auth import require_token
+from ..auth import current_user, owned_or_404
 from ..database import get_db
 from .routines import get_routine_or_404
 
-router = APIRouter(prefix="/logs", tags=["logs"], dependencies=[Depends(require_token)])
+router = APIRouter(prefix="/logs", tags=["logs"])
 
 MAX_CALENDAR_DAYS = 366
 
 
 @router.post("/", response_model=schemas.DailyLog)
-def upsert_log(payload: schemas.DailyLogCreate, db: Session = Depends(get_db)):
+def upsert_log(
+    payload: schemas.DailyLogCreate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
     """Idempotent per (routine, local date) — D6. Re-posting updates the status."""
-    get_routine_or_404(payload.routine_id, db)
+    # Owner-scoped: logging against somebody else's routine is a 404.
+    get_routine_or_404(payload.routine_id, db, user)
 
     log_date = payload.log_date or services.today_local()
     timestamp = payload.timestamp or services.utcnow()
@@ -27,6 +32,7 @@ def upsert_log(payload: schemas.DailyLogCreate, db: Session = Depends(get_db)):
         .filter(
             models.DailyLog.routine_id == payload.routine_id,
             models.DailyLog.log_date == log_date,
+            models.DailyLog.user_id == user.id,
         )
         .one_or_none()
     )
@@ -36,6 +42,7 @@ def upsert_log(payload: schemas.DailyLogCreate, db: Session = Depends(get_db)):
             log_date=log_date,
             timestamp=timestamp,
             status=payload.status,
+            user_id=user.id,
         )
         db.add(log)
     else:
@@ -48,9 +55,15 @@ def upsert_log(payload: schemas.DailyLogCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=List[schemas.DailyLog])
-def read_logs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_logs(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
     return (
         db.query(models.DailyLog)
+        .filter(models.DailyLog.user_id == user.id)
         .order_by(models.DailyLog.log_date.desc(), models.DailyLog.id.desc())
         .offset(skip)
         .limit(limit)
@@ -64,6 +77,7 @@ def read_calendar(
     date_from: date = Query(alias="from"),
     date_to: date = Query(alias="to"),
     db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
 ):
     if date_to < date_from:
         raise HTTPException(
@@ -76,10 +90,13 @@ def read_calendar(
             detail=f"range must span at most {MAX_CALENDAR_DAYS} days",
         )
 
-    routines = db.query(models.Routine).all()
+    routines = db.query(models.Routine).filter(models.Routine.user_id == user.id).all()
     logs = (
         db.query(models.DailyLog)
-        .filter(models.DailyLog.log_date.between(date_from, date_to))
+        .filter(
+            models.DailyLog.log_date.between(date_from, date_to),
+            models.DailyLog.user_id == user.id,
+        )
         .all()
     )
     by_date: Dict[date, Dict[int, models.LogStatus]] = {}
@@ -108,14 +125,15 @@ def read_calendar(
 
 
 @router.delete("/{log_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_log(log_id: int, db: Session = Depends(get_db)):
+def delete_log(
+    log_id: int,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(current_user),
+):
     """Undo a check-off, returning the routine to pending for that day."""
-    log = db.get(models.DailyLog, log_id)
-    if log is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Log {log_id} does not exist",
-        )
+    # Owner-scoped. Depending on current_user only proves somebody is signed in;
+    # without this filter any signed-in person could delete anyone's check-off.
+    log = owned_or_404(models.DailyLog, log_id, user, db, "Log")
     db.delete(log)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

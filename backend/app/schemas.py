@@ -18,6 +18,43 @@ def _normalise_days(value: List[int]) -> List[int]:
     return sorted(set(value))
 
 
+# --- Accounts (D5a) ---
+
+class User(BaseModel):
+    """What the client is told about the signed-in person. No hash, ever."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    display_name: str
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    display_name: str = Field(min_length=1, max_length=100)
+    # Length is the only rule. Composition rules push people towards
+    # "Password1!" and this is a household app, not a bank.
+    password: str = Field(min_length=10, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if "@" not in cleaned or cleaned.startswith("@") or cleaned.endswith("@"):
+            raise ValueError("that does not look like an email address")
+        return cleaned
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class AuthConfig(BaseModel):
+    allow_registration: bool
+
+
 # --- Products ---
 
 class ProductBase(BaseModel):

@@ -32,7 +32,11 @@ services:
     environment:
       DATABASE_URL: mysql+mysqldb://${MYSQL_USER:-beauty_user}:${MYSQL_PASSWORD:-change-me}@db:3306/${MYSQL_DATABASE:-beauty_alarm}
       APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Madrid}
-      API_TOKEN: ${API_TOKEN:-}
+      SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      AUTH_RATE_LIMIT: ${AUTH_RATE_LIMIT:-10}
+      AUTH_RATE_WINDOW_SECONDS: ${AUTH_RATE_WINDOW_SECONDS:-300}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}

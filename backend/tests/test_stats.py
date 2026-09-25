@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from tests.conftest import make_routine
 
 
-def test_streak_endpoint_starts_at_zero(client):
+def test_streak_endpoint_starts_at_zero(client, signed_in):
     assert client.get("/stats/streak").json() == {"current": 0, "longest": 0}
 
 
