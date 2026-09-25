@@ -31,10 +31,15 @@ const target = computed(() => {
   const t = props.entry.routine.target_interval_days
   return t === null ? null : `Target every ${t} days`
 })
+
+const isDue = computed(() => props.entry.status === 'due')
+const isOverdue = computed(() => props.entry.status === 'overdue')
+/** Due and overdue both want attention; only overdue is a reproach. */
+const needsAction = computed(() => isDue.value || isOverdue.value)
 </script>
 
 <template>
-  <div class="card tracker" :class="{ overdue: entry.overdue }">
+  <div class="card tracker" :class="{ due: isDue, overdue: isOverdue }">
     <div class="head">
       <div class="grow">
         <h3 class="title">{{ entry.routine.name }}</h3>
@@ -45,7 +50,7 @@ const target = computed(() => {
           <span class="unit">{{ showNumber ? ` ${unit}` : unit }}</span>
         </p>
       </div>
-      <button class="btn" :class="entry.overdue ? 'btn-primary' : ''" :disabled="busy" @click="emit('done')">
+      <button class="btn" :class="needsAction ? 'btn-primary' : ''" :disabled="busy" @click="emit('done')">
         Mark done
       </button>
     </div>
@@ -55,7 +60,8 @@ const target = computed(() => {
     <p class="meta">
       <!-- The word carries the state, not the tint: colour alone would be
            invisible to a colour-blind user and in bright light. -->
-      <span v-if="entry.overdue" class="pill">Overdue</span>
+      <span v-if="isDue" class="pill pill-due">Due today</span>
+      <span v-else-if="isOverdue" class="pill">Overdue</span>
       <span v-if="target">{{ target }}</span>
     </p>
   </div>
@@ -66,7 +72,12 @@ const target = computed(() => {
   padding: 0.875rem 0.875rem 0.75rem;
   transition: background var(--medium) var(--ease), border-color var(--medium) var(--ease);
 }
-/* A tinted surface, not a coloured edge. */
+/* A tinted surface, not a coloured edge. Due is the app's own accent because
+   it is a prompt; overdue is the warning colour because it is a miss. */
+.tracker.due {
+  background: var(--accent-surface);
+  border-color: var(--accent-border);
+}
 .tracker.overdue {
   background: var(--danger-surface);
   border-color: var(--danger-border);
@@ -104,6 +115,7 @@ const target = computed(() => {
   letter-spacing: -0.02em;
 }
 .tracker.overdue .n { color: var(--danger); }
+.tracker.due .n { color: var(--accent); }
 
 .steps {
   margin: 0.5rem 0 0;
@@ -133,4 +145,5 @@ const target = computed(() => {
   background: var(--danger);
   color: var(--surface);
 }
+.pill-due { background: var(--accent); color: var(--accent-contrast); }
 </style>

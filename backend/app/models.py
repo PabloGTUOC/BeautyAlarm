@@ -36,6 +36,20 @@ class RoutineKind(str, enum.Enum):
     tracked = "tracked"
 
 
+class TrackerStatus(str, enum.Enum):
+    """Where a tracked routine stands against its interval (D11).
+
+    Derived, never stored. Three states rather than a boolean because the day
+    the target is reached is the day you are meant to act, not the day you are
+    already late: "every 2 days" means do it on day 2, so calling day 2 overdue
+    tells somebody they have missed something they are doing on time.
+    """
+
+    waiting = "waiting"   # days_since < target
+    due = "due"           # days_since == target
+    overdue = "overdue"   # days_since > target
+
+
 class LogStatus(str, enum.Enum):
     completed = "completed"
     skipped = "skipped"

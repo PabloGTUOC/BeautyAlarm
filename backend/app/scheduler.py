@@ -12,13 +12,13 @@ import asyncio
 import logging
 from collections import defaultdict
 from datetime import date, datetime, time
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .database import SessionLocal
-from .models import DailyLog, LogStatus, Routine, RoutineKind
+from .models import DailyLog, LogStatus, Routine, RoutineKind, TrackerStatus
 from .push import send_to_user
 from .services import app_timezone, due_on, tracker_state
 
@@ -52,13 +52,16 @@ def routines_due_at(db: Session, day: date, at: time) -> List[Routine]:
 OVERDUE_REPEAT_DAYS = 2
 
 
-def tracked_overdue_at(db: Session, day: date, at: time) -> List[Routine]:
-    """Overdue tracked routines to notify about at this local minute (D11, D12).
+def tracked_due_at(db: Session, day: date, at: time) -> List[Tuple[Routine, TrackerStatus, int]]:
+    """Tracked routines to notify about at this local minute (D11, D12).
 
-    Notifies on the day the target is passed, then every second day while it
-    stays overdue. The cadence is derived from ``days_since`` rather than stored,
-    so it needs no "last notified" column and cannot drift: at exactly the target
-    the remainder is 0, the next day 1 (silent), the day after 0 again.
+    Notifies on the day it falls due, then every second day while it stays
+    overdue. The cadence is derived from ``days_since`` rather than stored, so it
+    needs no "last notified" column and cannot drift: on the due day the
+    remainder is 0, the next day 1 (silent), the day after 0 again.
+
+    Returns the status alongside each routine, because "due today" and "overdue"
+    deserve different words.
     """
     tracked = [
         r
@@ -83,11 +86,11 @@ def tracked_overdue_at(db: Session, day: date, at: time) -> List[Routine]:
 
     selected = []
     for routine in tracked:
-        _, days_since, overdue = tracker_state(routine, history, day)
-        if not overdue or days_since is None:
+        _, days_since, status = tracker_state(routine, history, day)
+        if days_since is None or status is TrackerStatus.waiting:
             continue
         if (days_since - routine.target_interval_days) % OVERDUE_REPEAT_DAYS == 0:
-            selected.append(routine)
+            selected.append((routine, status, days_since))
     return selected
 
 
@@ -115,21 +118,17 @@ def dispatch(minute: datetime) -> int:
                 url="/",
             )
 
-        # One notification per overdue tracked routine: they are unrelated
-        # errands, so batching them into one line would bury the detail.
-        for routine in tracked_overdue_at(db, day, at):
-            _, days_since, _ = tracker_state(routine, db.query(DailyLog).filter(
-                DailyLog.routine_id == routine.id,
-                DailyLog.status == LogStatus.completed,
-            ).all(), day)
-            delivered += send_to_user(
-                db,
-                routine.user_id,
-                title=f"{routine.name} is overdue",
-                body=f"{days_since} days since the last one "
-                     f"(target: every {routine.target_interval_days}).",
-                url="/",
-            )
+        # One notification per tracked routine: they are unrelated errands, so
+        # batching them into one line would bury the detail.
+        for routine, status, days_since in tracked_due_at(db, day, at):
+            if status is TrackerStatus.due:
+                title = f"{routine.name} is due today"
+                body = f"It has been {days_since} days, which is your interval."
+            else:
+                title = f"{routine.name} is overdue"
+                body = (f"{days_since} days since the last one "
+                        f"(target: every {routine.target_interval_days}).")
+            delivered += send_to_user(db, routine.user_id, title=title, body=body, url="/")
         return delivered
     finally:
         db.close()

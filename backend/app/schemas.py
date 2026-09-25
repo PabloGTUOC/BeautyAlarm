@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .models import LogStatus, RoutineKind, TimePeriod
+from .models import LogStatus, RoutineKind, TimePeriod, TrackerStatus
 
 
 def _normalise_days(value: List[int]) -> List[int]:
@@ -232,7 +232,9 @@ class TrackingEntry(BaseModel):
     routine: Routine
     last_completed: Optional[date] = None
     days_since: Optional[int] = None
-    overdue: bool = False
+    # Three states, not a boolean: the day the target is reached is the day to
+    # act, not the day you are late (D11).
+    status: TrackerStatus = TrackerStatus.waiting
 
 
 class TodayResponse(BaseModel):

@@ -5,7 +5,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from .config import get_settings
-from .models import DailyLog, LogStatus, Routine, RoutineKind
+from .models import DailyLog, LogStatus, Routine, RoutineKind, TrackerStatus
 
 
 def app_timezone() -> ZoneInfo:
@@ -71,24 +71,32 @@ def last_completed_date(logs: Iterable[DailyLog], routine_id: int) -> Optional[d
 
 def tracker_state(
     routine: Routine, logs: Iterable[DailyLog], today: date
-) -> Tuple[Optional[date], Optional[int], bool]:
+) -> Tuple[Optional[date], Optional[int], TrackerStatus]:
     """Elapsed-time state of a tracked routine (D11).
 
-    Returns ``(last_completed, days_since, overdue)``. ``days_since`` counts
-    from the last completed log, falling back to ``start_date`` so a routine
-    created today does not immediately read as overdue by an unbounded amount.
-    With neither, both values are null and the routine is not overdue: there is
-    no baseline to measure from, so claiming it is overdue would be a guess.
+    Returns ``(last_completed, days_since, status)``. ``days_since`` counts from
+    the last completed log, falling back to ``start_date`` so a routine created
+    today does not immediately read as overdue by an unbounded amount. With
+    neither, both values are null and the status is ``waiting``: there is no
+    baseline to measure from, so claiming anything else would be a guess.
+
+    The day ``days_since`` reaches the target is **due**, not overdue. Overdue
+    starts the day after. "Every 2 days" means act on day 2.
     """
     last = last_completed_date(logs, routine.id)
     baseline = last or routine.start_date
     if baseline is None:
-        return None, None, False
+        return None, None, TrackerStatus.waiting
 
     days_since = (today - baseline).days
     target = routine.target_interval_days
-    overdue = target is not None and days_since >= target
-    return last, days_since, overdue
+    if target is None or days_since < target:
+        status = TrackerStatus.waiting
+    elif days_since == target:
+        status = TrackerStatus.due
+    else:
+        status = TrackerStatus.overdue
+    return last, days_since, status
 
 
 def _logs_by_date(logs: Iterable[DailyLog]) -> Dict[date, Dict[int, LogStatus]]:

@@ -258,22 +258,34 @@ def test_today_reports_days_since_the_last_completion(client, signed_in):
 
     entry = client.get("/routines/today").json()["tracking"][0]
     assert entry["days_since"] == 23
-    assert entry["overdue"] is False
+    assert entry["status"] == "waiting"
     assert entry["last_completed"] == (date.today() - timedelta(days=23)).isoformat()
 
 
-def test_today_flags_an_overdue_tracker(client, signed_in):
+def _track_since(client, days, target=35, name="Haircut"):
     from tests.conftest import make_tracked
 
-    tracked = make_tracked(client, name="Haircut", target_interval_days=35)
+    tracked = make_tracked(client, name=name, target_interval_days=target)
     client.post(
         "/logs/",
         json={
             "routine_id": tracked["id"],
             "status": "completed",
-            "log_date": (date.today() - timedelta(days=40)).isoformat(),
+            "log_date": (date.today() - timedelta(days=days)).isoformat(),
         },
     )
-    entry = client.get("/routines/today").json()["tracking"][0]
+    return client.get("/routines/today").json()["tracking"][0]
+
+
+def test_today_flags_an_overdue_tracker(client, signed_in):
+    entry = _track_since(client, 40)
     assert entry["days_since"] == 40
-    assert entry["overdue"] is True
+    assert entry["status"] == "overdue"
+
+
+def test_the_target_day_reads_as_due_not_overdue(client, signed_in):
+    """Reported: "every 2 days" said overdue on day 2, calling somebody late on
+    the day they were acting on time."""
+    entry = _track_since(client, 2, target=2, name="Night Routine Day 1")
+    assert entry["days_since"] == 2
+    assert entry["status"] == "due"

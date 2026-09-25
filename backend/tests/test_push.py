@@ -12,7 +12,7 @@ from app.models import (
     RoutineProduct,
     TimePeriod,
 )
-from app.scheduler import routines_due_at, tracked_overdue_at
+from app.scheduler import routines_due_at, tracked_due_at
 from tests.conftest import make_routine, register
 
 MONDAY = date(2026, 9, 21)
@@ -154,13 +154,36 @@ def _complete(db, routine, days_ago):
 def test_tracked_routine_is_silent_before_its_target(db_session):
     routine = _tracked(db_session, target_interval_days=35)
     _complete(db_session, routine, 34)
-    assert tracked_overdue_at(db_session, MONDAY, time(22, 0)) == []
+    assert tracked_due_at(db_session, MONDAY, time(22, 0)) == []
 
 
-def test_tracked_routine_notifies_on_the_target_day(db_session):
+def test_tracked_routine_notifies_on_the_target_day_as_due_not_overdue(db_session):
+    """The day the interval is reached is the day to act, not the day you are
+    late. Flagging it overdue told people they had missed something on time."""
+    from app.models import TrackerStatus
+
     routine = _tracked(db_session, target_interval_days=35)
     _complete(db_session, routine, 35)
-    assert len(tracked_overdue_at(db_session, MONDAY, time(22, 0))) == 1
+    selected = tracked_due_at(db_session, MONDAY, time(22, 0))
+    assert len(selected) == 1
+    assert selected[0][1] is TrackerStatus.due
+
+
+def test_the_day_after_the_target_is_silent_then_overdue(db_session):
+    """Day 36 is deliberately quiet: the cadence is the due day, then every
+    second day (D12). Day 37 comes back, and by then it really is overdue."""
+    from app.models import TrackerStatus
+
+    routine = _tracked(db_session, target_interval_days=35)
+    _complete(db_session, routine, 36)
+    assert tracked_due_at(db_session, MONDAY, time(22, 0)) == []
+
+    for log in db_session.query(DailyLog).all():
+        db_session.delete(log)
+    db_session.commit()
+    _complete(db_session, routine, 37)
+    selected = tracked_due_at(db_session, MONDAY, time(22, 0))
+    assert selected[0][1] is TrackerStatus.overdue
 
 
 def test_overdue_tracker_repeats_every_second_day(db_session):
@@ -172,7 +195,7 @@ def test_overdue_tracker_repeats_every_second_day(db_session):
             db_session.delete(log)
         db_session.commit()
         _complete(db_session, routine, days_ago)
-        if tracked_overdue_at(db_session, MONDAY, time(22, 0)):
+        if tracked_due_at(db_session, MONDAY, time(22, 0)):
             fired.append(days_ago)
     assert fired == [35, 37, 39, 41]
 
@@ -180,10 +203,10 @@ def test_overdue_tracker_repeats_every_second_day(db_session):
 def test_tracked_routine_ignores_a_non_matching_minute(db_session):
     routine = _tracked(db_session, target_interval_days=35)
     _complete(db_session, routine, 40)
-    assert tracked_overdue_at(db_session, MONDAY, time(9, 0)) == []
+    assert tracked_due_at(db_session, MONDAY, time(9, 0)) == []
 
 
 def test_paused_tracked_routine_is_never_selected(db_session):
     routine = _tracked(db_session, target_interval_days=35, is_active=False)
     _complete(db_session, routine, 40)
-    assert tracked_overdue_at(db_session, MONDAY, time(22, 0)) == []
+    assert tracked_due_at(db_session, MONDAY, time(22, 0)) == []

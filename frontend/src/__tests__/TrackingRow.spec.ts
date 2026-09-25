@@ -24,7 +24,7 @@ function entry(overrides: Partial<TrackingEntry> = {}): TrackingEntry {
     },
     last_completed: '2026-09-01',
     days_since: 23,
-    overdue: false,
+    status: 'waiting' as const,
     ...overrides
   }
 }
@@ -62,10 +62,30 @@ describe('TrackingRow', () => {
 
   it('flags an overdue tracker', () => {
     const wrapper = mount(TrackingRow, {
-      props: { entry: entry({ days_since: 40, overdue: true }), busy: false }
+      props: { entry: entry({ days_since: 40, status: 'overdue' }), busy: false }
     })
     expect(read(wrapper)).toContain('Overdue')
     expect(wrapper.find('.card').classes()).toContain('overdue')
+  })
+
+  it('says due today on the day the interval is reached, not overdue', () => {
+    // Reported: "every 2 days" read as overdue on day 2, calling somebody late
+    // on the day they were acting on time.
+    const wrapper = mount(TrackingRow, {
+      props: { entry: entry({ days_since: 2, status: 'due' }), busy: false }
+    })
+    expect(read(wrapper)).toContain('Due today')
+    expect(read(wrapper)).not.toContain('Overdue')
+    expect(wrapper.find('.card').classes()).toContain('due')
+    expect(wrapper.find('.card').classes()).not.toContain('overdue')
+  })
+
+  it('stays quiet while still waiting', () => {
+    const wrapper = mount(TrackingRow, {
+      props: { entry: entry({ days_since: 1, status: 'waiting' }), busy: false }
+    })
+    expect(read(wrapper)).not.toContain('Due today')
+    expect(read(wrapper)).not.toContain('Overdue')
   })
 
   it('emits done when marked', async () => {

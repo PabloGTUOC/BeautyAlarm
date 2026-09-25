@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from app.models import DailyLog, LogStatus, Routine, RoutineKind
+from app.models import DailyLog, LogStatus, Routine, RoutineKind, TrackerStatus
 from app.services import compute_streaks, is_due, tracker_state
 
 TODAY = date(2026, 9, 21)  # a Monday, ISO weekday 1
@@ -143,36 +143,50 @@ def test_tracker_state_counts_from_the_last_completed_log():
     haircut = tracked(1, target_interval_days=35)
     logs = [log(1, TODAY - timedelta(days=23))]
 
-    last, days_since, overdue = tracker_state(haircut, logs, TODAY)
+    last, days_since, status = tracker_state(haircut, logs, TODAY)
     assert last == TODAY - timedelta(days=23)
     assert days_since == 23
-    assert not overdue
+    assert status is TrackerStatus.waiting
 
 
-def test_tracker_state_goes_overdue_on_the_target_day():
+def test_the_target_day_is_due_and_the_day_after_is_overdue():
+    """Reported from real use: "every 2 days" showed as overdue on day 2, which
+    called somebody late on the day they were acting on time."""
     haircut = tracked(1, target_interval_days=35)
-    for days, expected in ((34, False), (35, True), (40, True)):
+    for days, expected in (
+        (34, TrackerStatus.waiting),
+        (35, TrackerStatus.due),
+        (36, TrackerStatus.overdue),
+        (40, TrackerStatus.overdue),
+    ):
         logs = [log(1, TODAY - timedelta(days=days))]
-        _, days_since, overdue = tracker_state(haircut, logs, TODAY)
-        assert (days_since, overdue) == (days, expected)
+        _, days_since, status = tracker_state(haircut, logs, TODAY)
+        assert (days_since, status) == (days, expected), days
+
+
+def test_a_short_interval_is_due_not_overdue_on_the_day():
+    """The exact case reported: every 2 days, last done 2 days ago."""
+    nightly = tracked(1, target_interval_days=2)
+    _, days_since, status = tracker_state(nightly, [log(1, TODAY - timedelta(days=2))], TODAY)
+    assert (days_since, status) == (2, TrackerStatus.due)
 
 
 def test_tracker_state_falls_back_to_start_date_when_never_logged():
     haircut = tracked(1, target_interval_days=35, start_date=TODAY - timedelta(days=10))
-    last, days_since, overdue = tracker_state(haircut, [], TODAY)
+    last, days_since, status = tracker_state(haircut, [], TODAY)
     assert last is None
     assert days_since == 10
-    assert not overdue
+    assert status is TrackerStatus.waiting
 
 
 def test_tracker_state_has_no_opinion_without_a_baseline():
     """No log and no start_date: claiming it is overdue would be a guess."""
     haircut = tracked(1, target_interval_days=35)
-    assert tracker_state(haircut, [], TODAY) == (None, None, False)
+    assert tracker_state(haircut, [], TODAY) == (None, None, TrackerStatus.waiting)
 
 
 def test_tracker_state_ignores_skips():
     """A skipped haircut is not a haircut."""
     haircut = tracked(1, target_interval_days=35)
     logs = [log(1, TODAY - timedelta(days=2), status=LogStatus.skipped)]
-    assert tracker_state(haircut, logs, TODAY) == (None, None, False)
+    assert tracker_state(haircut, logs, TODAY) == (None, None, TrackerStatus.waiting)

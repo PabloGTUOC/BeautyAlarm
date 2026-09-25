@@ -2,6 +2,10 @@ export type TimePeriod = 'morning' | 'night'
 export type LogStatus = 'completed' | 'skipped'
 /** How a routine's due-ness is decided (D11). */
 export type RoutineKind = 'scheduled' | 'tracked'
+/** Where a tracked routine stands against its interval (D11). Three states,
+ *  because the day the target is reached is the day to act, not the day you
+ *  are already late. */
+export type TrackerStatus = 'waiting' | 'due' | 'overdue'
 
 export interface User {
   id: number
@@ -62,7 +66,7 @@ export interface TrackingEntry {
   last_completed: string | null
   /** Null when there is no baseline to measure from. */
   days_since: number | null
-  overdue: boolean
+  status: TrackerStatus
 }
 
 export interface TodayResponse {

@@ -132,17 +132,22 @@ def read_today(
             .all()
         )
         for routine in tracked:
-            last, days_since, overdue = services.tracker_state(routine, history, today)
+            last, days_since, status = services.tracker_state(routine, history, today)
             tracking.append(
                 schemas.TrackingEntry(
                     routine=schemas.Routine.model_validate(routine),
                     last_completed=last,
                     days_since=days_since,
-                    overdue=overdue,
+                    status=status,
                 )
             )
-        # Most urgent first: overdue before not, then longest elapsed.
-        tracking.sort(key=lambda t: (not t.overdue, -(t.days_since or 0)))
+        # Most urgent first: overdue, then due, then the rest by longest elapsed.
+        urgency = {
+            models.TrackerStatus.overdue: 0,
+            models.TrackerStatus.due: 1,
+            models.TrackerStatus.waiting: 2,
+        }
+        tracking.sort(key=lambda t: (urgency[t.status], -(t.days_since or 0)))
 
     return schemas.TodayResponse(date=today, entries=entries, tracking=tracking)
 
