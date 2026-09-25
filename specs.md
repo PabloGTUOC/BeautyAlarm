@@ -52,9 +52,11 @@ not an implementation detail.
 | **D5** | **Auth is a shared bearer token** (`API_TOKEN`), with Cloudflare Access in front of the tunnel as the real gate. | The brief put the API on the public internet with no auth at all. One token is the least machinery that closes that. A token held in browser storage is weak on its own, which is why Access carries the real weight. |
 | **D6** | **One log row per `(routine_id, log_date)`**, enforced by a unique constraint. `completed` and `skipped` are both explicit user actions; the absence of a row means *pending*. No nightly job backfills skips. | Makes logging idempotent, makes "did I do it today" a lookup rather than a scan, and lets an offline client replay writes safely. |
 | **D7** | **A streak is consecutive local days on which every routine due that day has a `completed` log.** Days with nothing due are neutral: they neither break a streak nor extend it. A `skipped` log breaks it. Today cannot extend a streak while still in progress, but does not break one unless it holds a skip. | "Or streak view" in the brief was unmeasurable. This is computable from the logs alone and matches what a user means by "I didn't miss a day". |
-| **D8** | **A treatment is a product.** One `Product` model covers both words in the brief. | Nothing in v1 needs a multi-product procedure. If one appears, it becomes a `Treatment` grouping products — an additive change. |
+| **D8a** | *Supersedes D8.* **A routine groups 0..N products in an explicit order**, through a `routine_products` join table carrying `position`. Zero products means the routine is an action or service rather than a product application. **Every routine carries its own required `name`.** | D8 assumed nothing needed a multi-product procedure and predicted this exact change. A layered routine (hyaluronic acid → peptides → moisturiser) is one decision at one time of day, so it is one routine with an ordered product list, not three routines. Order is stored because application order is part of the instruction. The name is required because a routine can no longer borrow a label from a single product: it may have three products or none. |
 | **D9** | **nginx serves the built PWA and reverse-proxies `/api/` to the API**, so the client and API share one origin behind one tunnel. | Same-origin removes CORS from production entirely, gives the service worker a clean scope, and means the tunnel exposes exactly one hostname. |
 | **D10** | **The scheduler is an asyncio loop inside the API process**, waking every 60 seconds. No extra container, no extra dependency. | Minute granularity is all a skincare reminder needs. It does mean the API must run a **single** worker — two workers would send every notification twice. |
+| **D11** | **A routine has one of two kinds.** `scheduled` recurs on ISO weekdays and is the behaviour of every routine up to now. `tracked` has no weekday schedule: it is measured by the days elapsed since its last `completed` log, against a required `target_interval_days`, and becomes *overdue* once that target is passed. A tracked routine carries no `days_of_week` and no `time_period`. | Some things are appointments, not habits. A haircut is not done on Tuesdays — it is done every five weeks or so, and what the user wants to see is "23 days since your last haircut". Expressing that as a weekday schedule is impossible, and expressing it as a separate feature would duplicate logging, notifications and history. One `kind` column on `routines` reuses all of it. |
+| **D12** | **Tracked routines are excluded from streaks (D7) and from adherence.** Both are scoped to `kind='scheduled'`. An overdue tracked routine notifies at its `notification_time` and then **re-notifies every second day** while it stays overdue. | D7 asks whether every routine *due* that day is completed. A tracked routine is not due on any particular day, so including it would score every single day as broken and pin the streak at zero permanently. The two-day cadence is the compromise between a reminder that is easy to miss once and one that nags daily until dismissed. |
 
 ## 4. Conventions
 
@@ -91,12 +93,32 @@ All tables carry a nullable `user_id INT` per D4, unused in v1.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INT PK | |
-| `product_id` | INT NOT NULL FK → `products.id` | `ON DELETE RESTRICT` |
-| `days_of_week` | JSON NOT NULL | sorted unique ints in 1–7, non-empty (D2, D3) |
-| `time_period` | ENUM('morning','night') NOT NULL | display bucket only |
+| `name` | VARCHAR(255) NOT NULL | required for every routine (D8a) |
+| `kind` | ENUM('scheduled','tracked') NOT NULL DEFAULT 'scheduled' | D11 |
+| `days_of_week` | JSON NULL | sorted unique ints in 1–7, non-empty (D2, D3). Required when `scheduled`, must be null when `tracked` |
+| `time_period` | ENUM('morning','night') NULL | display bucket only. Required when `scheduled`, must be null when `tracked` |
+| `target_interval_days` | INT NULL | required when `tracked`, must be null when `scheduled`; positive |
+| `start_date` | DATE NULL | routine is not due before this local date; also the "days since" baseline for a `tracked` routine with no log yet |
 | `notification_time` | TIME NULL | null means no notification |
 | `is_active` | BOOL NOT NULL DEFAULT TRUE | pause without deleting |
 | `end_date` | DATE NULL | routine stops being due after this local date |
+
+`product_id` was removed in favour of `routine_products` (D8a).
+
+### `routine_products`
+Ordered membership of products in a routine (D8a). A routine with no rows here
+is an action or service, such as a haircut.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INT PK | |
+| `routine_id` | INT NOT NULL FK → `routines.id` | `ON DELETE CASCADE` |
+| `product_id` | INT NOT NULL FK → `products.id` | `ON DELETE RESTRICT` |
+| `position` | INT NOT NULL | application order, ascending; read as `ORDER BY position, id` |
+| | UNIQUE (`routine_id`, `product_id`) | a product appears at most once per routine |
+
+`position` is deliberately **not** unique: enforcing it would make reordering
+require temporary values to dodge the constraint, for no benefit.
 
 ### `daily_logs`
 | Column | Type | Notes |
@@ -140,25 +162,51 @@ All routes require `Authorization: Bearer $API_TOKEN` except `/healthz` (D5).
 | POST | `/push/unsubscribe` | drop a subscription by endpoint |
 | POST | `/push/test` | send a test notification to every subscription |
 
-A routine is **due on a local date** when it is `is_active`, the date's ISO
-weekday is in `days_of_week`, and the date is on or before `end_date` (if set).
+A **scheduled** routine is **due on a local date** when it is `is_active`, the
+date's ISO weekday is in `days_of_week`, and the date falls on or after
+`start_date` (if set) and on or before `end_date` (if set).
+
+A **tracked** routine is never "due on a date" in that sense (D11). It is
+**overdue** when `days_since_last >= target_interval_days`, where
+`days_since_last` counts from its most recent `completed` log, or from
+`start_date` when it has none. Per D12 it is excluded from `/stats/streak` and
+`/stats/adherence` entirely.
+
+`GET /routines/today` returns three sections: the morning and night entries for
+scheduled routines due today, and a `tracking` list carrying every active
+tracked routine with its `last_completed`, `days_since` and `overdue` flag.
 
 Referencing a missing `product_id` or `routine_id` returns **404**, never a 500
-from a foreign-key violation.
+from a foreign-key violation. Creating or updating a routine with fields that
+contradict its `kind` — weekdays on a tracked routine, a target interval on a
+scheduled one — returns **422**.
 
 ## 7. Features
 
 ### Routine configuration
-Add, edit, pause, and delete routines. Pick a product from the existing list or
-create a new one inline — the same product is never duplicated by adding a
-second routine for it. Choose any subset of weekdays, a morning or night slot,
-and optionally a notification time.
+Add, edit, pause, and delete routines. Every routine has a name. A routine is
+either **scheduled** or **tracked** (D11).
+
+A scheduled routine takes an **ordered list of products** — pick each from the
+existing list or create one inline, and arrange them in application order, so a
+single routine can be hyaluronic acid, then peptides, then moisturiser (D8a).
+The same product is never duplicated by adding a second routine for it. Choose
+any subset of weekdays, a morning or night slot, and optionally a notification
+time.
+
+A tracked routine takes a target interval in days instead of a schedule, and
+usually no products at all — a haircut, a facial, a dermatologist visit.
 
 ### Notifications
 Per D1b, the API runs a scheduler that wakes every minute, resolves the current
-local time, and pushes to every registered subscription for each routine that is
-due now, has a matching `notification_time`, and has no log for today — a
-routine already checked off does not nag. Each minute fires at most once.
+local time, and pushes to every registered subscription for each scheduled
+routine that is due now, has a matching `notification_time`, and has no log for
+today — a routine already checked off does not nag. Each minute fires at most
+once.
+
+Tracked routines are selected differently (D11): at their `notification_time`, a
+tracked routine notifies when it is overdue, and then again **every second day**
+while it stays overdue, so a missed reminder comes back without nagging daily.
 
 The client registers a service worker, asks for notification permission from a
 user gesture, subscribes with the VAPID public key, and posts the subscription
@@ -167,14 +215,25 @@ checklist when one is clicked. A push that returns 404 or 410 means the
 subscription is dead and the row is deleted.
 
 ### Checklist
-The today view lists routines due today, split into Morning and Night, each
-showing completed / skipped / pending from the server. Checking off writes a log
-and unchecking deletes it. State survives reloads because it is read from the
-API, not held in component state.
+The today view lists scheduled routines due today, split into Morning and Night,
+each showing completed / skipped / pending from the server and listing its
+products in application order. Checking off writes a log for the whole routine —
+one tick, one log row, regardless of how many products it contains (D6 is
+unchanged) — and unchecking deletes it. State survives reloads because it is
+read from the API, not held in component state.
+
+Below those sits a **Tracking** section listing every active tracked routine
+with the days elapsed since it was last done ("23 days since your last
+haircut"), its target interval, and a *mark done* action. Overdue entries are
+called out. The section is always visible, not only when something is overdue.
 
 ### Progress
 A calendar heatmap of completion per day plus current and longest streak (D7),
-and a 30-day adherence percentage per routine.
+and a 30-day adherence percentage per routine. All three cover scheduled
+routines only (D12); tracked routines have their own counters on the today view.
+Adherence counts a routine as due only from its `start_date`, so a routine
+created last week is not reported as having missed the three weeks before it
+existed.
 
 ## 8. Infrastructure
 
