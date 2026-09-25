@@ -16,7 +16,7 @@ is on the branch `phase8-multi-product-tracked`, **not yet merged to `main`**.
 **Proven on real hardware.** The stack was built and run on the user's Mac on
 2026-09-21. Both images build; the MySQL healthcheck and `service_healthy`
 gating work; every migration applies to real MySQL; nginx serves the PWA and
-proxies `/api/`. 80 backend tests, 29 frontend tests, `vue-tsc` and `vite build`
+proxies `/api/`. 80 backend tests, 36 frontend tests, `vue-tsc` and `vite build`
 clean. Both Phase 8 features were exercised end to end against live MySQL.
 
 **Still not proven:**
@@ -51,7 +51,7 @@ a missing token rather than a broken deployment.
 2. **[specs.md](specs.md)** — the locked v1 specification. Decisions D1a–D12 in
    §3 resolve the ambiguities in the original brief. Treat them as settled;
    changing one is a spec change, so update specs.md in the same commit.
-3. **[PLAN.md](PLAN.md)** — the gap register (G1–G38) and the phased plan.
+3. **[PLAN.md](PLAN.md)** — the gap register (G1–G39) and the phased plan.
    This is the source of truth for what is done and what is next.
 
 ## Keeping the docs current
@@ -133,6 +133,59 @@ traceable.
 
 Newest entries at the top. Each entry records where the session ended so the
 next one can pick up without re-deriving context.
+
+### 2026-09-25 — UX critique, and the three states nobody had looked at
+
+Ran an Impeccable critique on the Today view, the first scored review this
+project has had. **24/40.** Snapshot in
+`.impeccable/critique/2026-09-25T10-35-13Z__frontend-src-views-todayview-vue.md`,
+which `/impeccable polish` can read as a backlog.
+
+The deterministic detector returned zero findings on `frontend/src`. That is a
+real result, not an empty scan: it fires on a planted bad file, and it flags the
+exact `border-left: 3px solid var(--danger)` this codebase shipped one round
+earlier. No visual overlay was produced and none is claimed, because the Chrome
+extension cannot reach `localhost` here.
+
+**Everything worth fixing was in a state that had never been rendered (G39).**
+Screenshots of normal data look fine; stubbing the other states did not.
+
+* **No completion moment.** Finishing every routine gave struck-through rows and
+  empty space. The ending is what gets remembered, and this one said nothing.
+  There is now a completion panel carrying the streak, which was previously
+  invisible unless you opened the Progress tab. It appears only when every due
+  routine is *completed*; a partly skipped day reads "Nothing left for today,
+  1 done, 1 skipped" instead, because celebrating skips would be a lie.
+* **Error state.** Raw `Internal Server Error` over a blank screen, no way back.
+  Now plain language, the technical detail kept as secondary text, a Retry that
+  re-runs the load, and `role="alert"` so a screen reader announces it. The date
+  in the header also survives the failure now, instead of vanishing exactly when
+  the user is most disoriented.
+* **Empty state, which was a logic bug I introduced.** `isEmpty` conflated "no
+  routines at all" with "a rest day", so someone with six routines was told to
+  "add a routine to get started", with no control to do it with. The two cases
+  are now told apart by a lazy `listRoutines()` call made only when the screen
+  would otherwise be blank; first run gets an **Add a routine** button, a rest
+  day gets "Your streak is safe."
+
+Also added per-section progress counts (2/2, 1/1), which the critique flagged as
+missing under visibility of system status.
+
+**Verified:** 36 frontend tests, up from 29, covering all three states plus the
+"do not celebrate a skipped day" rule and the retry path. 80 backend tests,
+`vue-tsc` and `vite build` clean, detector clean, no horizontal scroll at
+320/390/430px. Rebuilt and redeployed the `web` image.
+
+**Left open deliberately.** The critique's other findings are in the snapshot and
+not yet acted on: no bulk "mark all done" (N routines is still N taps every day),
+`confirm()` still guards routine deletion, and completing a routine does not
+announce itself to a screen reader. The open question worth answering before
+more UI work: **should Skip exist at all on the daily list?** It is a second
+full-size control on every row, and an absent log already means pending.
+
+**Ended at:** branch `phase8-multi-product-tracked`, committed.
+
+**Next:** a real phone, and a real push. Then G29.
 
 ### 2026-09-25 — Mobile design pass
 

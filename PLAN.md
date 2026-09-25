@@ -17,7 +17,7 @@ and referenced from commit messages and [CLAUDE.md](CLAUDE.md).
 | 5 | Progress view | G7 | ✅ Done |
 | 6 | Infra hardening | G17, G18, G20, G27 | ✅ Done† |
 | 7 | Tests and CI | G22 | ✅ Done |
-| 8 | Multi-product routines and tracked services | G28, G30–G38 | ✅ Done§ |
+| 8 | Multi-product routines and tracked services | G28, G30–G39 | ✅ Done§ |
 
 † Resolved on 2026-09-21: the stack was built and run on the user's machine.
 Both images build, the MySQL healthcheck and `service_healthy` gating work, all
@@ -30,9 +30,10 @@ of writing. The selection logic, subscription storage and endpoint behaviour are
 covered by tests.
 
 § Verified on the running stack against real MySQL: both migrations applied to
-live data with no loss, 80 backend and 29 frontend tests pass, and both features
-were exercised end to end through the API. The rebuilt PWA has not yet been
-driven in a browser.
+live data with no loss, 80 backend and 36 frontend tests pass, and both features
+were exercised end to end through the API. The UI was reviewed and measured in a
+headless browser across five states, three widths and both colour schemes; it
+has not been driven on a real phone.
 
 **Open gaps: G29.** Everything else is closed or obsolete.
 
@@ -111,6 +112,7 @@ some gaps by deletion and made one obsolete.
 | **G35** | **The scheduler cannot notify on an elapsed interval** — selection is purely weekday plus `notification_time`. | ✅ Phase 8 — `tracked_overdue_at()`, repeating every second day (D12) |
 | **G36** | **The routine editor is single-product and schedule-only** — no kind toggle, no ordered product picker, no interval field. | ✅ Phase 8 — kind toggle, ordered product picker, interval field |
 | **G38** | **Every touch target was below the 44px minimum**, measured on a 390px viewport: buttons 37px, tab-bar links 35px, weekday chips 30px — 24 of 24 controls failing, in an app used one-handed and half-awake. Found by measuring the rendered PWA, not by reading the CSS. | ✅ Phase 8 — `--tap` floor applied to every control; 0 of 24 failing, verified in both themes at 320/390/430px |
+| **G39** | **The Today view's three non-happy states were never designed or rendered.** Finishing every routine produced a void: struck-through rows and empty space, no acknowledgement, and the streak hidden on another tab. A failed load showed the raw server string over a blank screen with no retry. The empty state told a user with six routines to "add a routine to get started" on a rest day, and offered no control to do it with. All three were found by stubbing states, not by reading code. | ✅ Phase 8 — completion state carrying the streak, plain-language error with a retry, and an empty state that tells first run apart from a rest day |
 | **G37** | **The test suite was not hermetic.** `conftest.py` set `DATABASE_URL`, `APP_TIMEZONE` and `API_TOKEN` but not the VAPID pair, so running it inside the `api` container inherited the deployment's real keys from `.env`: "unconfigured" tests saw a configured app and the scheduler started against a database the fixtures never created. Green in CI, red on the machine the stack runs on. | ✅ Phase 8 — `conftest.py` clears both VAPID keys |
 
 ## Phases
