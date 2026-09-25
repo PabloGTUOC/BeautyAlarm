@@ -4,22 +4,25 @@ import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { WEEKDAYS } from '../dates'
 import { useRoutinesStore } from '../stores/routines'
-import type { TimePeriod } from '../types'
+import type { RoutineInput, RoutineKind, TimePeriod } from '../types'
 
 const props = defineProps<{ id?: string }>()
 const router = useRouter()
 const store = useRoutinesStore()
 
-const NEW_PRODUCT = -1
-
 const routineId = computed(() => (props.id ? Number(props.id) : null))
 const isEdit = computed(() => routineId.value !== null)
 
-const productId = ref<number>(NEW_PRODUCT)
+const name = ref('')
+const kind = ref<RoutineKind>('scheduled')
+/** Ordered: index 0 is applied first (D8a). */
+const productIds = ref<number[]>([])
+const pickerId = ref<number | ''>('')
 const newName = ref('')
 const newBrand = ref('')
 const days = ref<number[]>([1, 2, 3, 4, 5, 6, 7])
 const timePeriod = ref<TimePeriod>('morning')
+const targetInterval = ref<number | ''>(35)
 const notificationTime = ref('')
 const isActive = ref(true)
 const endDate = ref('')
@@ -28,7 +31,57 @@ const loading = ref(true)
 const saving = ref(false)
 const error = ref<string | null>(null)
 
-const creatingProduct = computed(() => productId.value === NEW_PRODUCT)
+const isTracked = computed(() => kind.value === 'tracked')
+
+/** Products already added drop out of the picker: the same product cannot
+ *  appear twice in one routine. */
+const available = computed(() =>
+  store.activeProducts.filter((p) => !productIds.value.includes(p.id))
+)
+
+const chosen = computed(() =>
+  productIds.value
+    .map((id) => store.activeProducts.find((p) => p.id === id))
+    .filter((p): p is NonNullable<typeof p> => p !== undefined)
+)
+
+function addProduct(): void {
+  if (pickerId.value === '') return
+  const id = Number(pickerId.value)
+  if (!productIds.value.includes(id)) productIds.value = [...productIds.value, id]
+  pickerId.value = ''
+}
+
+async function addNewProduct(): Promise<void> {
+  if (!newName.value.trim()) {
+    error.value = 'Give the product a name.'
+    return
+  }
+  error.value = null
+  try {
+    const product = await store.findOrCreateProduct(newName.value, newBrand.value)
+    if (!productIds.value.includes(product.id)) {
+      productIds.value = [...productIds.value, product.id]
+    }
+    newName.value = ''
+    newBrand.value = ''
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+function removeProduct(id: number): void {
+  productIds.value = productIds.value.filter((p) => p !== id)
+}
+
+/** Application order is meaningful, so it is editable rather than sorted. */
+function move(index: number, delta: number): void {
+  const next = index + delta
+  if (next < 0 || next >= productIds.value.length) return
+  const copy = [...productIds.value]
+  ;[copy[index], copy[next]] = [copy[next], copy[index]]
+  productIds.value = copy
+}
 
 function toggleDay(iso: number): void {
   days.value = days.value.includes(iso)
@@ -37,8 +90,14 @@ function toggleDay(iso: number): void {
 }
 
 function validate(): string | null {
-  if (days.value.length === 0) return 'Pick at least one day.'
-  if (creatingProduct.value && !newName.value.trim()) return 'Give the product a name.'
+  if (!name.value.trim()) return 'Give the routine a name.'
+  if (isTracked.value) {
+    if (targetInterval.value === '' || Number(targetInterval.value) < 1) {
+      return 'Set how many days between occurrences.'
+    }
+  } else if (days.value.length === 0) {
+    return 'Pick at least one day.'
+  }
   return null
 }
 
@@ -52,14 +111,16 @@ async function save(): Promise<void> {
   saving.value = true
   error.value = null
   try {
-    const product = creatingProduct.value
-      ? await store.findOrCreateProduct(newName.value, newBrand.value)
-      : { id: productId.value }
-
-    const payload = {
-      product_id: product.id,
-      days_of_week: days.value,
-      time_period: timePeriod.value,
+    // The API rejects fields that contradict the kind (D11), so the unused
+    // half is sent as null rather than left at its form default.
+    const payload: RoutineInput = {
+      name: name.value.trim(),
+      kind: kind.value,
+      product_ids: productIds.value,
+      days_of_week: isTracked.value ? null : days.value,
+      time_period: isTracked.value ? null : timePeriod.value,
+      target_interval_days: isTracked.value ? Number(targetInterval.value) : null,
+      start_date: null,
       // An empty time input means "no notification", which the API stores as null.
       notification_time: notificationTime.value || null,
       is_active: isActive.value,
@@ -82,14 +143,15 @@ onMounted(async () => {
     await store.load()
     if (routineId.value !== null) {
       const routine = await api.getRoutine(routineId.value)
-      productId.value = routine.product_id
-      days.value = [...routine.days_of_week]
-      timePeriod.value = routine.time_period
+      name.value = routine.name
+      kind.value = routine.kind
+      productIds.value = routine.products.map((p) => p.id)
+      days.value = routine.days_of_week ? [...routine.days_of_week] : [1, 2, 3, 4, 5, 6, 7]
+      timePeriod.value = routine.time_period ?? 'morning'
+      targetInterval.value = routine.target_interval_days ?? 35
       notificationTime.value = routine.notification_time?.slice(0, 5) ?? ''
       isActive.value = routine.is_active
       endDate.value = routine.end_date ?? ''
-    } else if (store.activeProducts.length > 0) {
-      productId.value = NEW_PRODUCT
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -108,71 +170,224 @@ onMounted(async () => {
   <p v-if="loading" class="muted">Loading…</p>
 
   <form v-else @submit.prevent="save">
-    <label class="field">
-      <span>Product</span>
-      <select v-model.number="productId">
-        <option :value="NEW_PRODUCT">＋ New product…</option>
-        <option v-for="product in store.activeProducts" :key="product.id" :value="product.id">
-          {{ product.name }}{{ product.brand ? ` — ${product.brand}` : '' }}
-        </option>
-      </select>
-    </label>
+    <fieldset class="fieldset">
+      <legend>What it is</legend>
 
-    <template v-if="creatingProduct">
       <label class="field">
         <span>Name</span>
-        <input v-model="newName" placeholder="Retinol serum" />
+        <input v-model="name" :placeholder="isTracked ? 'Haircut' : 'Night routine'" />
       </label>
-      <label class="field">
-        <span>Brand (optional)</span>
-        <input v-model="newBrand" placeholder="CeraVe" />
-      </label>
-    </template>
 
-    <div class="field">
-      <span>Days</span>
-      <div class="chips">
-        <button
-          v-for="day in WEEKDAYS"
-          :key="day.iso"
-          type="button"
-          class="chip"
-          :aria-pressed="days.includes(day.iso)"
-          @click="toggleDay(day.iso)"
-        >
-          {{ day.short }}
-        </button>
+      <div class="field">
+        <span>Type</span>
+        <div class="segmented" role="group" aria-label="Routine type">
+          <button type="button" :aria-pressed="kind === 'scheduled'" @click="kind = 'scheduled'">
+            On a schedule
+          </button>
+          <button type="button" :aria-pressed="kind === 'tracked'" @click="kind = 'tracked'">
+            Every so often
+          </button>
+        </div>
+        <small class="hint">
+          {{
+            isTracked
+              ? 'Tracked by how long since you last did it: a haircut, a facial.'
+              : 'Recurs on the weekdays you pick.'
+          }}
+        </small>
       </div>
-    </div>
+    </fieldset>
 
-    <label class="field">
-      <span>Time of day</span>
-      <select v-model="timePeriod">
-        <option value="morning">Morning</option>
-        <option value="night">Night</option>
-      </select>
-    </label>
+    <fieldset class="fieldset">
+      <legend>Products{{ isTracked ? ' (optional)' : '' }}</legend>
 
-    <label class="field">
-      <span>Notify at (leave empty for no notification)</span>
-      <input v-model="notificationTime" type="time" />
-    </label>
+      <ol v-if="chosen.length" class="picked">
+        <li v-for="(product, index) in chosen" :key="product.id">
+          <span class="picked-name">
+            {{ product.name }}<template v-if="product.brand"> · {{ product.brand }}</template>
+          </span>
+          <button
+            type="button"
+            class="btn btn-icon"
+            :disabled="index === 0"
+            :aria-label="`Move ${product.name} earlier`"
+            @click="move(index, -1)"
+          >↑</button>
+          <button
+            type="button"
+            class="btn btn-icon"
+            :disabled="index === chosen.length - 1"
+            :aria-label="`Move ${product.name} later`"
+            @click="move(index, 1)"
+          >↓</button>
+          <button
+            type="button"
+            class="btn btn-icon btn-danger"
+            :aria-label="`Remove ${product.name}`"
+            @click="removeProduct(product.id)"
+          >✕</button>
+        </li>
+      </ol>
+      <p v-else class="hint no-products">
+        {{ isTracked ? 'None. This is an action, not a product.' : 'None added yet.' }}
+      </p>
 
-    <label class="field">
-      <span>Ends on (optional)</span>
-      <input v-model="endDate" type="date" />
-    </label>
+      <div class="stack">
+        <div class="pair">
+          <select v-model="pickerId" aria-label="Add an existing product">
+            <option value="">Add an existing product…</option>
+            <option v-for="product in available" :key="product.id" :value="product.id">
+              {{ product.name }}{{ product.brand ? ` · ${product.brand}` : '' }}
+            </option>
+          </select>
+          <button type="button" class="btn" :disabled="pickerId === ''" @click="addProduct">Add</button>
+        </div>
 
-    <label class="field row">
-      <input v-model="isActive" type="checkbox" style="width: auto" />
-      <span style="margin: 0">Active</span>
-    </label>
+        <!-- Stacked, not squeezed into one row: two inputs plus a button on a
+             390px screen truncated both placeholders. -->
+        <input v-model="newName" placeholder="…or type a new product" aria-label="New product name" />
+        <div class="pair">
+          <input v-model="newBrand" placeholder="Brand (optional)" aria-label="New product brand" />
+          <button type="button" class="btn" @click="addNewProduct">Create</button>
+        </div>
+      </div>
+    </fieldset>
 
-    <div class="actions">
-      <button class="btn btn-primary" type="submit" :disabled="saving">
-        {{ saving ? 'Saving…' : 'Save' }}
-      </button>
+    <fieldset class="fieldset">
+      <legend>When</legend>
+
+      <template v-if="!isTracked">
+        <div class="field">
+          <span>Days</span>
+          <div class="chips weekdays">
+            <button
+              v-for="day in WEEKDAYS"
+              :key="day.iso"
+              type="button"
+              class="chip"
+              :aria-pressed="days.includes(day.iso)"
+              :aria-label="day.long"
+              @click="toggleDay(day.iso)"
+            >
+              {{ day.short }}
+            </button>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>Time of day</span>
+          <select v-model="timePeriod">
+            <option value="morning">Morning</option>
+            <option value="night">Night</option>
+          </select>
+        </label>
+      </template>
+
+      <label v-else class="field">
+        <span>Days between</span>
+        <input v-model.number="targetInterval" type="number" min="1" max="3650" inputmode="numeric" />
+        <small class="hint">
+          Reminds you once it has been this long, then every other day.
+        </small>
+      </label>
+
+      <label class="field">
+        <span>Notify at</span>
+        <input v-model="notificationTime" type="time" />
+        <small class="hint">Leave empty for no notification.</small>
+      </label>
+
+      <label v-if="!isTracked" class="field">
+        <span>Ends on (optional)</span>
+        <input v-model="endDate" type="date" />
+      </label>
+
+      <label class="field checkbox">
+        <input v-model="isActive" type="checkbox" />
+        <span>Active</span>
+      </label>
+    </fieldset>
+
+    <div class="form-actions">
       <button class="btn" type="button" @click="router.push('/routines')">Cancel</button>
+      <button class="btn btn-primary" type="submit" :disabled="saving">
+        {{ saving ? 'Saving…' : 'Save routine' }}
+      </button>
     </div>
   </form>
 </template>
+
+<style scoped>
+.picked {
+  list-style: none;
+  counter-reset: step;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.picked li {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.25rem 0.25rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+/* Numbered, because the order is the instruction. */
+.picked li::before {
+  counter-increment: step;
+  content: counter(step);
+  flex: none;
+  inline-size: 1.25rem;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.picked-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.no-products { margin: 0 0 0.75rem; }
+
+.stack { display: flex; flex-direction: column; gap: 0.5rem; }
+.stack input, .stack select {
+  width: 100%;
+  font: inherit;
+  font-size: 1rem;
+  min-block-size: var(--tap);
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+.stack input:focus, .stack select:focus { border-color: var(--accent); }
+.pair { display: flex; gap: 0.5rem; }
+.pair > :first-child { flex: 1; min-width: 0; }
+.pair > .btn { flex: none; }
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-block-size: var(--tap);
+}
+.checkbox input {
+  inline-size: 1.35rem;
+  block-size: 1.35rem;
+  min-block-size: 0;
+  accent-color: var(--accent);
+}
+.checkbox > span { margin: 0; color: var(--text); font-size: 1rem; }
+</style>

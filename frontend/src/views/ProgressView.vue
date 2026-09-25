@@ -21,19 +21,6 @@ function startOfWeek(date: Date): Date {
 
 const byDate = computed(() => new Map(days.value.map((day) => [day.date, day])))
 
-/**
- * The first day that has any recorded activity. Nothing is known about the days
- * before it — the routine may not have existed yet — so they are drawn as empty
- * rather than as misses. Routines have no start_date to consult (see PLAN.md G28).
- */
-const trackingStart = computed(() => {
-  const active = days.value
-    .filter((day) => day.completed > 0 || day.skipped > 0)
-    .map((day) => day.date)
-    .sort()
-  return active[0] ?? null
-})
-
 /** Columns of 7 days, Monday at the top. */
 const columns = computed(() => {
   const today = new Date()
@@ -42,19 +29,18 @@ const columns = computed(() => {
     date: string
     day: CalendarDay | null
     future: boolean
-    untracked: boolean
   }[][] = []
   for (let week = 0; week < WEEKS; week += 1) {
     const column = []
     for (let offset = 0; offset < 7; offset += 1) {
       const date = addDays(first, week * 7 + offset)
       const key = toLocalIsoDate(date)
-      const untracked = trackingStart.value !== null && key < trackingStart.value
+      // Days before a routine's start_date come back with due = 0 from the API
+      // (G28), which level() already renders as "nothing due".
       column.push({
         date: key,
-        day: untracked ? null : byDate.value.get(key) ?? null,
-        future: date > today,
-        untracked
+        day: byDate.value.get(key) ?? null,
+        future: date > today
       })
     }
     result.push(column)
@@ -85,13 +71,12 @@ function level(day: CalendarDay | null): number {
   return 4
 }
 
-function describe(day: CalendarDay | null, date: string, untracked = false): string {
+function describe(day: CalendarDay | null, date: string): string {
   const readable = fromLocalIsoDate(date).toLocaleDateString(undefined, {
     weekday: 'short',
     day: 'numeric',
     month: 'short'
   })
-  if (untracked) return `${readable}: before tracking started`
   if (!day || day.due === 0) return `${readable}: nothing due`
   return `${readable}: ${day.completed} of ${day.due} done${day.skipped ? `, ${day.skipped} skipped` : ''}`
 }
@@ -131,16 +116,11 @@ onMounted(async () => {
   <p v-if="loading" class="muted">Loading…</p>
 
   <template v-else>
-    <div class="tiles">
-      <div class="card tile">
-        <div class="tile-value">{{ streak.current }}</div>
-        <div class="muted">Current streak</div>
-      </div>
-      <div class="card tile">
-        <div class="tile-value">{{ streak.longest }}</div>
-        <div class="muted">Longest streak</div>
-      </div>
-    </div>
+    <p class="streak">
+      <strong>{{ streak.current }}</strong>
+      {{ streak.current === 1 ? 'day' : 'days' }} in a row<template v-if="streak.longest > streak.current">,
+      best so far {{ streak.longest }}</template>.
+    </p>
 
     <h2>Last {{ WEEKS }} weeks</h2>
     <div class="card viz-root">
@@ -160,7 +140,8 @@ onMounted(async () => {
               type="button"
               class="cell"
               :class="[`level-${level(cell.day)}`, { future: cell.future }]"
-              :aria-label="describe(cell.day, cell.date, cell.untracked)"
+              :aria-label="describe(cell.day, cell.date)"
+              @click="hovered = cell.day"
               @mouseenter="hovered = cell.day"
               @focus="hovered = cell.day"
               @mouseleave="hovered = null"
@@ -171,7 +152,7 @@ onMounted(async () => {
       </div>
 
       <p class="muted readout">
-        {{ hovered ? describe(hovered, hovered.date) : 'Hover or focus a day for details.' }}
+        {{ hovered ? describe(hovered, hovered.date) : 'Tap a day for details.' }}
       </p>
 
       <div class="legend muted">
@@ -203,16 +184,17 @@ onMounted(async () => {
     </div>
 
     <h2>Last 30 days</h2>
-    <p v-if="adherence.length === 0" class="empty">No routines were due in the last 30 days.</p>
-    <div v-for="row in adherence" :key="row.routine_id" class="card viz-root">
-      <div class="row">
-        <div class="grow">{{ row.product_name }}</div>
-        <div class="muted">{{ row.completed }}/{{ row.due }} · {{ percent(row) }}%</div>
-      </div>
-      <div class="bar-track">
-        <div class="bar-fill" :style="{ width: `${percent(row)}%` }" />
-      </div>
-    </div>
+    <ul class="list">
+      <li v-for="row in adherence" :key="row.routine_id">
+        <div class="bar-head">
+          <span class="bar-name">{{ row.routine_name }}</span>
+          <span class="bar-value">{{ row.completed }}/{{ row.due }} · {{ percent(row) }}%</span>
+        </div>
+        <div class="bar" role="img" :aria-label="`${row.routine_name}: ${row.completed} of ${row.due} completed`">
+          <div class="bar-fill" :style="{ inlineSize: percent(row) + '%' }" />
+        </div>
+      </li>
+    </ul>
   </template>
 </template>
 
@@ -247,9 +229,51 @@ onMounted(async () => {
   --level-4: #eaa8c0;
 }
 
-.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 0.625rem; }
-.tile { text-align: center; margin-bottom: 0; }
-.tile-value { font-size: 2.25rem; font-weight: 700; line-height: 1.1; }
+/* One sentence instead of two big-number cards. The streak is a fact about
+   the user, not a dashboard KPI. */
+.streak {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+.streak strong {
+  font-size: 2rem;
+  font-weight: 680;
+  line-height: 1;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  margin-inline-end: 0.15rem;
+}
+
+.bar-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+.bar-name { font-size: 0.9375rem; font-weight: 550; min-width: 0; overflow-wrap: anywhere; }
+.bar-value {
+  flex: none;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.bar {
+  block-size: 6px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  overflow: hidden;
+}
+.bar-fill {
+  block-size: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: inline-size var(--medium) var(--ease);
+}
 
 .months,
 .grid { display: grid; gap: 3px; }
@@ -267,13 +291,18 @@ onMounted(async () => {
 .grid { flex: 1; grid-template-rows: repeat(7, 1fr); grid-auto-flow: column; }
 
 .cell {
+  /* 24px floor: WCAG 2.5.8 target size. Eighty-four cells cannot each be 44px,
+     and the same data is available in the table below. */
   aspect-ratio: 1;
   min-width: 0;
+  min-block-size: 24px;
   padding: 0;
   border: none;
   border-radius: 3px;
   background: var(--level-empty);
+  transition: transform var(--fast) var(--ease);
 }
+.cell:active { transform: scale(0.88); }
 .cell.future { opacity: 0.35; }
 .cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .level-1 { background: var(--level-1); }
@@ -289,12 +318,5 @@ onMounted(async () => {
 .table-view table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; margin-top: 0.5rem; }
 .table-view th, .table-view td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); }
 
-.bar-track {
-  margin-top: 0.5rem;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--surface-alt);
-  overflow: hidden;
-}
-.bar-fill { height: 100%; border-radius: 4px; background: var(--level-3); }
+
 </style>

@@ -7,28 +7,27 @@ const props = defineProps<{ entry: TodayEntry; busy: boolean }>()
 const emit = defineEmits<{ log: [LogStatus]; undo: [] }>()
 
 const status = computed(() => props.entry.log?.status ?? null)
-const product = computed(() => props.entry.routine.product)
-const subtitle = computed(() => {
-  const parts: string[] = []
-  if (product.value?.brand) parts.push(product.value.brand)
-  const time = trimSeconds(props.entry.routine.notification_time)
-  if (time) parts.push(time)
-  return parts.join(' · ')
-})
+const products = computed(() => props.entry.routine.products ?? [])
+
+/** Application order, e.g. "Hyaluronic Acid → Peptides" (D8a). One tick covers
+ *  the whole routine (D6), so these are steps to follow, not checkboxes. */
+const steps = computed(() => products.value.map((p) => p.name).join('  →  '))
+
+const time = computed(() => trimSeconds(props.entry.routine.notification_time))
+
+/** Only shown for a single-product routine: with three products the brand of
+ *  the first one is noise. */
+const brand = computed(() =>
+  products.value.length === 1 ? products.value[0].brand : null
+)
 </script>
 
 <template>
-  <div class="card">
-    <div class="row">
-      <div class="grow">
-        <div :class="{ strike: status === 'completed' }">
-          {{ product?.name ?? 'Unknown product' }}
-        </div>
-        <div v-if="subtitle" class="muted">{{ subtitle }}</div>
-      </div>
+  <div class="card row-card" :class="{ done: status === 'completed', skipped: status === 'skipped' }">
+    <div class="head">
+      <h3 class="title" :class="{ strike: status === 'completed' }">{{ entry.routine.name }}</h3>
 
       <div v-if="status" class="actions">
-        <span class="muted">{{ status === 'completed' ? 'Done' : 'Skipped' }}</span>
         <button class="btn" :disabled="busy" @click="emit('undo')">Undo</button>
       </div>
       <div v-else class="actions">
@@ -38,5 +37,62 @@ const subtitle = computed(() => {
         </button>
       </div>
     </div>
+
+    <!-- Full width, below the actions rather than beside them: a three-product
+         stack wrapped to three lines when it was boxed into half the row. -->
+    <p v-if="products.length > 1" class="steps">{{ steps }}</p>
+
+    <p class="meta">
+      <span v-if="status === 'completed'" class="state">Done</span>
+      <span v-else-if="status === 'skipped'" class="state">Skipped</span>
+      <span v-if="brand">{{ brand }}</span>
+      <span v-if="time">{{ time }}</span>
+    </p>
   </div>
 </template>
+
+<style scoped>
+.row-card {
+  padding: 0.875rem 0.875rem 0.75rem;
+  transition: opacity var(--medium) var(--ease), background var(--medium) var(--ease);
+}
+.row-card.done,
+.row-card.skipped { background: var(--surface-alt); }
+.row-card.done { opacity: 0.72; }
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.006em;
+}
+
+.steps {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.625rem;
+  margin: 0.375rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.meta:empty { display: none; }
+.state { font-weight: 650; }
+</style>

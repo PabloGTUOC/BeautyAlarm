@@ -1,5 +1,7 @@
 export type TimePeriod = 'morning' | 'night'
 export type LogStatus = 'completed' | 'skipped'
+/** How a routine's due-ness is decided (D11). */
+export type RoutineKind = 'scheduled' | 'tracked'
 
 export interface Product {
   id: number
@@ -11,15 +13,23 @@ export interface Product {
 
 export interface Routine {
   id: number
-  product_id: number
-  /** ISO weekdays, 1 = Monday .. 7 = Sunday (D2). */
-  days_of_week: number[]
-  time_period: TimePeriod
+  /** Required: with 0 or 3 products there is no product name to borrow (D8a). */
+  name: string
+  kind: RoutineKind
+  /** ISO weekdays, 1 = Monday .. 7 = Sunday (D2). Null when tracked. */
+  days_of_week: number[] | null
+  /** Null when tracked. */
+  time_period: TimePeriod | null
+  /** Days between occurrences. Set only when tracked. */
+  target_interval_days: number | null
+  /** Not due before this local date (G28). */
+  start_date: string | null
   /** Local wall clock, "HH:MM:SS", or null for no notification. */
   notification_time: string | null
   is_active: boolean
   end_date: string | null
-  product: Product | null
+  /** In application order. Empty for an action or service (D8a). */
+  products: Product[]
 }
 
 export interface DailyLog {
@@ -36,9 +46,20 @@ export interface TodayEntry {
   log: DailyLog | null
 }
 
+/** A tracked routine's elapsed-time state (D11). */
+export interface TrackingEntry {
+  routine: Routine
+  last_completed: string | null
+  /** Null when there is no baseline to measure from. */
+  days_since: number | null
+  overdue: boolean
+}
+
 export interface TodayResponse {
   date: string
   entries: TodayEntry[]
+  /** Always present, not only when something is overdue. */
+  tracking: TrackingEntry[]
 }
 
 export interface CalendarDay {
@@ -54,9 +75,14 @@ export interface Streak {
 }
 
 export interface RoutineInput {
-  product_id: number
-  days_of_week: number[]
-  time_period: TimePeriod
+  name: string
+  kind: RoutineKind
+  /** Ordered: index 0 is applied first (D8a). */
+  product_ids: number[]
+  days_of_week: number[] | null
+  time_period: TimePeriod | null
+  target_interval_days: number | null
+  start_date: string | null
   notification_time: string | null
   is_active: boolean
   end_date: string | null
@@ -64,7 +90,7 @@ export interface RoutineInput {
 
 export interface RoutineAdherence {
   routine_id: number
-  product_name: string
+  routine_name: string
   due: number
   completed: number
 }

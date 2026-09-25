@@ -1,9 +1,9 @@
 from datetime import date, datetime, time
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .models import LogStatus, TimePeriod
+from .models import LogStatus, RoutineKind, TimePeriod
 
 
 def _normalise_days(value: List[int]) -> List[int]:
@@ -45,30 +45,51 @@ class Product(ProductBase):
 
 # --- Routines ---
 
+def _check_kind_fields(
+    kind: RoutineKind,
+    days_of_week: Optional[List[int]],
+    time_period: Optional[TimePeriod],
+    target_interval_days: Optional[int],
+) -> None:
+    """Enforce the per-kind field rules from D11.
+
+    A scheduled routine is defined by its weekdays and slot; a tracked one by
+    its interval. Supplying the other kind's fields is a 422 rather than a
+    silently ignored value, because silently ignoring a weekday list on a
+    haircut would leave the user believing they had set a schedule.
+    """
+    if kind is RoutineKind.scheduled:
+        if days_of_week is None:
+            raise ValueError("days_of_week is required for a scheduled routine")
+        if time_period is None:
+            raise ValueError("time_period is required for a scheduled routine")
+        if target_interval_days is not None:
+            raise ValueError(
+                "target_interval_days applies to tracked routines only"
+            )
+    else:
+        if target_interval_days is None:
+            raise ValueError("target_interval_days is required for a tracked routine")
+        if days_of_week is not None:
+            raise ValueError(
+                "days_of_week applies to scheduled routines only — a tracked "
+                "routine recurs on an interval, not on weekdays"
+            )
+        if time_period is not None:
+            raise ValueError("time_period applies to scheduled routines only")
+
+
 class RoutineBase(BaseModel):
-    product_id: int
-    days_of_week: List[int]
-    time_period: TimePeriod
-    notification_time: Optional[time] = None
-    is_active: bool = True
-    end_date: Optional[date] = None
-
-    @field_validator("days_of_week")
-    @classmethod
-    def check_days(cls, value: List[int]) -> List[int]:
-        return _normalise_days(value)
-
-
-class RoutineCreate(RoutineBase):
-    pass
-
-
-class RoutineUpdate(BaseModel):
-    product_id: Optional[int] = None
+    # Required for every routine: with 0 or 3 products there is no single
+    # product name to borrow (D8a).
+    name: str = Field(min_length=1, max_length=255)
+    kind: RoutineKind = RoutineKind.scheduled
     days_of_week: Optional[List[int]] = None
     time_period: Optional[TimePeriod] = None
+    target_interval_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    start_date: Optional[date] = None
     notification_time: Optional[time] = None
-    is_active: Optional[bool] = None
+    is_active: bool = True
     end_date: Optional[date] = None
 
     @field_validator("days_of_week")
@@ -76,12 +97,61 @@ class RoutineUpdate(BaseModel):
     def check_days(cls, value: Optional[List[int]]) -> Optional[List[int]]:
         return None if value is None else _normalise_days(value)
 
+    @model_validator(mode="after")
+    def check_kind(self) -> "RoutineBase":
+        _check_kind_fields(
+            self.kind, self.days_of_week, self.time_period, self.target_interval_days
+        )
+        return self
+
+
+class RoutineCreate(RoutineBase):
+    # Ordered: position 0 is applied first (D8a). Empty means an action or
+    # service with no products, such as a haircut.
+    product_ids: List[int] = Field(default_factory=list)
+
+    @field_validator("product_ids")
+    @classmethod
+    def check_products(cls, value: List[int]) -> List[int]:
+        if len(set(value)) != len(value):
+            raise ValueError("product_ids must not repeat a product")
+        return value
+
+
+class RoutineUpdate(BaseModel):
+    """Every field optional. Kind coherence is re-checked against the merged
+    result in the router, since a patch alone cannot see the stored kind."""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    kind: Optional[RoutineKind] = None
+    days_of_week: Optional[List[int]] = None
+    time_period: Optional[TimePeriod] = None
+    target_interval_days: Optional[int] = Field(default=None, ge=1, le=3650)
+    start_date: Optional[date] = None
+    notification_time: Optional[time] = None
+    is_active: Optional[bool] = None
+    end_date: Optional[date] = None
+    product_ids: Optional[List[int]] = None
+
+    @field_validator("days_of_week")
+    @classmethod
+    def check_days(cls, value: Optional[List[int]]) -> Optional[List[int]]:
+        return None if value is None else _normalise_days(value)
+
+    @field_validator("product_ids")
+    @classmethod
+    def check_products(cls, value: Optional[List[int]]) -> Optional[List[int]]:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("product_ids must not repeat a product")
+        return value
+
 
 class Routine(RoutineBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    product: Optional[Product] = None
+    # In application order. Empty for a tracked service (D8a).
+    products: List[Product] = Field(default_factory=list)
 
 
 # --- Daily logs ---
@@ -114,9 +184,25 @@ class TodayEntry(BaseModel):
     log: Optional[DailyLog] = None
 
 
+class TrackingEntry(BaseModel):
+    """A tracked routine's elapsed-time state (D11).
+
+    ``days_since`` counts from the last completed log, or from ``start_date``
+    when there is none. It is null only when the routine has neither, in which
+    case the client shows "not yet recorded" rather than a number.
+    """
+
+    routine: Routine
+    last_completed: Optional[date] = None
+    days_since: Optional[int] = None
+    overdue: bool = False
+
+
 class TodayResponse(BaseModel):
     date: date
     entries: List[TodayEntry]
+    # Always present, not only when something is overdue.
+    tracking: List[TrackingEntry] = Field(default_factory=list)
 
 
 class CalendarDay(BaseModel):
@@ -133,7 +219,9 @@ class StreakResponse(BaseModel):
 
 class RoutineAdherence(BaseModel):
     routine_id: int
-    product_name: str
+    # The routine's own name (D8a). Was the product name, which no longer
+    # identifies a routine that holds three products or none.
+    routine_name: str
     due: int
     completed: int
 

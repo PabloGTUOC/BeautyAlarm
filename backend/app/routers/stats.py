@@ -37,7 +37,10 @@ def read_adherence(days: int = Query(default=30, ge=1, le=366), db: Session = De
         completed_dates.setdefault(routine_id, set()).add(log_date)
 
     results = []
-    for routine in routines:
+    # Tracked routines are excluded (D12): they are never due on a given date,
+    # so every day would read as a miss. is_due enforces this too, but filtering
+    # here keeps the intent visible.
+    for routine in services.scheduled_only(routines):
         due_dates = [
             start + timedelta(days=offset)
             for offset in range(days)
@@ -49,10 +52,10 @@ def read_adherence(days: int = Query(default=30, ge=1, le=366), db: Session = De
         results.append(
             schemas.RoutineAdherence(
                 routine_id=routine.id,
-                product_name=routine.product.name if routine.product else "Unknown product",
+                routine_name=routine.name,
                 due=len(due_dates),
                 completed=sum(1 for day in due_dates if day in done),
             )
         )
-    results.sort(key=lambda r: (r.completed / r.due, r.product_name))
+    results.sort(key=lambda r: (r.completed / r.due, r.routine_name))
     return results

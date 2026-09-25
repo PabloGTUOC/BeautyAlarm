@@ -1,11 +1,11 @@
 export const WEEKDAYS = [
-  { iso: 1, short: 'Mon' },
-  { iso: 2, short: 'Tue' },
-  { iso: 3, short: 'Wed' },
-  { iso: 4, short: 'Thu' },
-  { iso: 5, short: 'Fri' },
-  { iso: 6, short: 'Sat' },
-  { iso: 7, short: 'Sun' }
+  { iso: 1, short: 'Mon', long: 'Monday' },
+  { iso: 2, short: 'Tue', long: 'Tuesday' },
+  { iso: 3, short: 'Wed', long: 'Wednesday' },
+  { iso: 4, short: 'Thu', long: 'Thursday' },
+  { iso: 5, short: 'Fri', long: 'Friday' },
+  { iso: 6, short: 'Sat', long: 'Saturday' },
+  { iso: 7, short: 'Sun', long: 'Sunday' }
 ] as const
 
 /**

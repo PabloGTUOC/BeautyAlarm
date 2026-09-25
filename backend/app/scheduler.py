@@ -17,9 +17,9 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .database import SessionLocal
-from .models import DailyLog, Routine
+from .models import DailyLog, LogStatus, Routine, RoutineKind
 from .push import send_to_all
-from .services import app_timezone, due_on
+from .services import app_timezone, due_on, tracker_state
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -47,21 +47,82 @@ def routines_due_at(db: Session, day: date, at: time) -> List[Routine]:
     ]
 
 
+#: Days between repeat notifications for an overdue tracked routine (D12).
+OVERDUE_REPEAT_DAYS = 2
+
+
+def tracked_overdue_at(db: Session, day: date, at: time) -> List[Routine]:
+    """Overdue tracked routines to notify about at this local minute (D11, D12).
+
+    Notifies on the day the target is passed, then every second day while it
+    stays overdue. The cadence is derived from ``days_since`` rather than stored,
+    so it needs no "last notified" column and cannot drift: at exactly the target
+    the remainder is 0, the next day 1 (silent), the day after 0 again.
+    """
+    tracked = [
+        r
+        for r in db.query(Routine).all()
+        if r.kind is RoutineKind.tracked
+        and r.is_active
+        and r.notification_time is not None
+        and r.notification_time.hour == at.hour
+        and r.notification_time.minute == at.minute
+    ]
+    if not tracked:
+        return []
+
+    history = (
+        db.query(DailyLog)
+        .filter(
+            DailyLog.routine_id.in_([r.id for r in tracked]),
+            DailyLog.status == LogStatus.completed,
+        )
+        .all()
+    )
+
+    selected = []
+    for routine in tracked:
+        _, days_since, overdue = tracker_state(routine, history, day)
+        if not overdue or days_since is None:
+            continue
+        if (days_since - routine.target_interval_days) % OVERDUE_REPEAT_DAYS == 0:
+            selected.append(routine)
+    return selected
+
+
 def dispatch(minute: datetime) -> int:
     """Send whatever is due at this local minute. Returns notifications delivered."""
     db = SessionLocal()
     try:
-        routines = routines_due_at(db, minute.date(), minute.time())
-        if not routines:
-            return 0
-        period = routines[0].time_period.value
-        names = ", ".join(r.product.name for r in routines if r.product is not None)
-        return send_to_all(
-            db,
-            title=f"Time for your {period} routine",
-            body=names or f"{len(routines)} routine(s) due",
-            url="/",
-        )
+        delivered = 0
+        day, at = minute.date(), minute.time()
+
+        routines = routines_due_at(db, day, at)
+        if routines:
+            period = routines[0].time_period.value
+            names = ", ".join(r.name for r in routines)
+            delivered += send_to_all(
+                db,
+                title=f"Time for your {period} routine",
+                body=names or f"{len(routines)} routine(s) due",
+                url="/",
+            )
+
+        # One notification per overdue tracked routine: they are unrelated
+        # errands, so batching them into one line would bury the detail.
+        for routine in tracked_overdue_at(db, day, at):
+            _, days_since, _ = tracker_state(routine, db.query(DailyLog).filter(
+                DailyLog.routine_id == routine.id,
+                DailyLog.status == LogStatus.completed,
+            ).all(), day)
+            delivered += send_to_all(
+                db,
+                title=f"{routine.name} is overdue",
+                body=f"{days_since} days since the last one "
+                     f"(target: every {routine.target_interval_days}).",
+                url="/",
+            )
+        return delivered
     finally:
         db.close()
 

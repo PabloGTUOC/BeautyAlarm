@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import TodayRow from '../components/TodayRow.vue'
+import TrackingRow from '../components/TrackingRow.vue'
 import { api } from '../api'
 import { fromLocalIsoDate } from '../dates'
-import type { LogStatus, TodayEntry, TodayResponse } from '../types'
+import type { LogStatus, TodayEntry, TodayResponse, TrackingEntry } from '../types'
 
 const data = ref<TodayResponse | null>(null)
 const loading = ref(true)
@@ -12,6 +13,13 @@ const busyRoutine = ref<number | null>(null)
 
 const morning = computed(() => entriesFor('morning'))
 const night = computed(() => entriesFor('night'))
+const tracking = computed(() => data.value?.tracking ?? [])
+
+/** Nothing due *and* nothing being tracked — otherwise the counters are the
+ *  point of the screen even on a day with no scheduled routines. */
+const isEmpty = computed(
+  () => (data.value?.entries.length ?? 0) === 0 && tracking.value.length === 0
+)
 
 const heading = computed(() => {
   if (!data.value) return ''
@@ -50,6 +58,19 @@ async function log(entry: TodayEntry, status: LogStatus): Promise<void> {
   }
 }
 
+/** Tracked routines are marked done for today; the counter resets to 0 (D11). */
+async function markTracked(entry: TrackingEntry): Promise<void> {
+  busyRoutine.value = entry.routine.id
+  try {
+    await api.logRoutine(entry.routine.id, 'completed', data.value?.date)
+    await load()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    busyRoutine.value = null
+  }
+}
+
 async function undo(entry: TodayEntry): Promise<void> {
   if (!entry.log) return
   busyRoutine.value = entry.routine.id
@@ -76,12 +97,12 @@ onMounted(load)
   <p v-if="loading" class="muted">Loading…</p>
 
   <template v-else-if="data">
-    <p v-if="data.entries.length === 0" class="empty">
+    <p v-if="isEmpty" class="empty">
       Nothing due today. Add a routine to get started.
     </p>
 
     <template v-if="morning.length">
-      <h2>Morning</h2>
+      <h2 class="section-morning">Morning</h2>
       <TodayRow
         v-for="entry in morning"
         :key="entry.routine.id"
@@ -93,7 +114,7 @@ onMounted(load)
     </template>
 
     <template v-if="night.length">
-      <h2>Night</h2>
+      <h2 class="section-night">Night</h2>
       <TodayRow
         v-for="entry in night"
         :key="entry.routine.id"
@@ -101,6 +122,18 @@ onMounted(load)
         :busy="busyRoutine === entry.routine.id"
         @log="log(entry, $event)"
         @undo="undo(entry)"
+      />
+    </template>
+
+    <!-- Always shown, not only when overdue: the counter is the feature (D11). -->
+    <template v-if="tracking.length">
+      <h2 class="section-tracking">Tracking</h2>
+      <TrackingRow
+        v-for="entry in tracking"
+        :key="entry.routine.id"
+        :entry="entry"
+        :busy="busyRoutine === entry.routine.id"
+        @done="markTracked(entry)"
       />
     </template>
   </template>

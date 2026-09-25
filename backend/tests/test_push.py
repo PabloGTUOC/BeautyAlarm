@@ -1,10 +1,18 @@
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
 from app.config import get_settings
-from app.models import Product, Routine, TimePeriod
-from app.scheduler import routines_due_at
+from app.models import (
+    DailyLog,
+    LogStatus,
+    Product,
+    Routine,
+    RoutineKind,
+    RoutineProduct,
+    TimePeriod,
+)
+from app.scheduler import routines_due_at, tracked_overdue_at
 from tests.conftest import make_routine
 
 MONDAY = date(2026, 9, 21)
@@ -62,9 +70,26 @@ def _routine(db, **overrides):
     db.add(product)
     db.flush()
     fields = {
-        "product_id": product.id,
+        "name": "Nightly retinol",
         "days_of_week": [1, 2, 3, 4, 5, 6, 7],
         "time_period": TimePeriod.night,
+        "notification_time": time(22, 0),
+        "is_active": True,
+    }
+    fields.update(overrides)
+    routine = Routine(**fields)
+    routine.product_links = [RoutineProduct(product_id=product.id, position=0)]
+    db.add(routine)
+    db.commit()
+    return routine
+
+
+def _tracked(db, **overrides):
+    """A tracked routine with no products, e.g. a haircut (D11)."""
+    fields = {
+        "name": "Haircut",
+        "kind": RoutineKind.tracked,
+        "target_interval_days": 35,
         "notification_time": time(22, 0),
         "is_active": True,
     }
@@ -107,3 +132,56 @@ def test_scheduler_does_not_nag_about_a_logged_routine(client, db_session, produ
         },
     )
     assert routines_due_at(db_session, MONDAY, time(22, 0)) == []
+
+
+# --- Phase 8: overdue tracked notifications (D12, G35) ---
+
+def _complete(db, routine, days_ago):
+    day = MONDAY - timedelta(days=days_ago)
+    db.add(
+        DailyLog(
+            routine_id=routine.id,
+            log_date=day,
+            timestamp=datetime.combine(day, time(12, 0)),
+            status=LogStatus.completed,
+        )
+    )
+    db.commit()
+
+
+def test_tracked_routine_is_silent_before_its_target(db_session):
+    routine = _tracked(db_session, target_interval_days=35)
+    _complete(db_session, routine, 34)
+    assert tracked_overdue_at(db_session, MONDAY, time(22, 0)) == []
+
+
+def test_tracked_routine_notifies_on_the_target_day(db_session):
+    routine = _tracked(db_session, target_interval_days=35)
+    _complete(db_session, routine, 35)
+    assert len(tracked_overdue_at(db_session, MONDAY, time(22, 0))) == 1
+
+
+def test_overdue_tracker_repeats_every_second_day(db_session):
+    """D12: notify on the target day, then every other day — not daily."""
+    routine = _tracked(db_session, target_interval_days=35)
+    fired = []
+    for days_ago in range(35, 42):
+        for log in db_session.query(DailyLog).all():
+            db_session.delete(log)
+        db_session.commit()
+        _complete(db_session, routine, days_ago)
+        if tracked_overdue_at(db_session, MONDAY, time(22, 0)):
+            fired.append(days_ago)
+    assert fired == [35, 37, 39, 41]
+
+
+def test_tracked_routine_ignores_a_non_matching_minute(db_session):
+    routine = _tracked(db_session, target_interval_days=35)
+    _complete(db_session, routine, 40)
+    assert tracked_overdue_at(db_session, MONDAY, time(9, 0)) == []
+
+
+def test_paused_tracked_routine_is_never_selected(db_session):
+    routine = _tracked(db_session, target_interval_days=35, is_active=False)
+    _complete(db_session, routine, 40)
+    assert tracked_overdue_at(db_session, MONDAY, time(22, 0)) == []

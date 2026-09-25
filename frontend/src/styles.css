@@ -12,7 +12,26 @@
   --success: #2f7d54;
   --danger: #b03030;
   --radius: 12px;
+  --radius-sm: 9px;
   --shadow: 0 1px 3px rgba(44, 30, 35, 0.08);
+
+  /* Minimum comfortable touch target. Everything tappable is at least this
+     tall; the app is used one-handed, often without looking. */
+  --tap: 44px;
+  /* One source of truth: the tab bar's height, the scroll padding that keeps
+     content clear of it, and the sticky form bar all derive from this. */
+  --nav-h: 60px;
+
+  /* Tinted surfaces derived from the semantic colours, so a state reads as a
+     surface rather than as a coloured stripe or a saturated fill. */
+  --danger-surface: color-mix(in srgb, var(--danger) 9%, var(--surface));
+  --danger-border: color-mix(in srgb, var(--danger) 32%, var(--border));
+  --accent-surface: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --accent-border: color-mix(in srgb, var(--accent) 45%, var(--border));
+
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --fast: 140ms;
+  --medium: 220ms;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -44,15 +63,49 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1 { font-size: 1.5rem; margin: 0; }
-h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 1.5rem 0 0.5rem; }
+h1 { font-size: 1.5rem; line-height: 1.2; margin: 0; letter-spacing: -0.015em; }
+
+/* Section headings read as headings, in the text colour at a real size. The
+   previous tiny tracked uppercase label was quieter than the body it
+   introduced, which inverted the hierarchy. */
+h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  margin: 1.75rem 0 0.625rem;
+}
+
+/* Morning and night have had colours in the palette from the start and have
+   never been used. A dot is enough to tell the two halves of the day apart
+   while scrolling, without tinting whole rows. */
+h2::before {
+  content: '';
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: var(--section-dot, var(--text-muted));
+  flex: none;
+}
+h2.section-morning { --section-dot: var(--morning); }
+h2.section-night { --section-dot: var(--night); }
+h2.section-tracking { --section-dot: var(--accent); }
 
 button { font: inherit; cursor: pointer; }
+
+:where(a, button, input, select, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
 
 .app {
   max-width: 640px;
   margin: 0 auto;
-  padding: 1rem 1rem calc(5rem + env(safe-area-inset-bottom));
+  padding: 1rem 1rem calc(var(--nav-h) + 1.5rem + env(safe-area-inset-bottom));
 }
 
 .app-header {
@@ -70,26 +123,34 @@ button { font: inherit; cursor: pointer; }
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 10;
   display: flex;
+  align-items: center;
   justify-content: center;
   gap: 0.25rem;
-  padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom));
+  min-block-size: var(--nav-h);
+  padding: 0.375rem 0.5rem calc(0.375rem + env(safe-area-inset-bottom));
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
 
 .nav a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex: 1 1 0;
   max-width: 8rem;
+  min-block-size: var(--tap);
   text-align: center;
   padding: 0.5rem 0.25rem;
   border-radius: var(--radius);
   text-decoration: none;
   color: var(--text-muted);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
 }
 
-.nav a.router-link-active { background: var(--surface-alt); color: var(--accent); font-weight: 600; }
+.nav a.router-link-active { background: var(--surface-alt); color: var(--accent); font-weight: 650; }
 
 .card {
   background: var(--surface);
@@ -106,44 +167,182 @@ button { font: inherit; cursor: pointer; }
 .strike { text-decoration: line-through; opacity: 0.6; }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  /* 44px floor: the previous 37px control was under the iOS minimum, which is
+     the difference between hitting it half-awake and missing it. */
+  min-block-size: var(--tap);
+  padding: 0.5rem 0.9rem;
   border: 1px solid var(--border);
   background: var(--surface-alt);
   color: var(--text);
   border-radius: var(--radius);
-  padding: 0.45rem 0.8rem;
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
+  font-weight: 550;
+  line-height: 1.2;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
 }
 .btn:hover { border-color: var(--accent); }
+.btn:active { transform: scale(0.97); }
 .btn-primary { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
 .btn-danger { color: var(--danger); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+/* Square icon-only control, still a full target. */
+.btn-icon {
+  inline-size: var(--tap);
+  min-inline-size: var(--tap);
+  padding: 0;
+  font-size: 1rem;
+}
 
 .field { display: block; margin-bottom: 1rem; }
 .field > span { display: block; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.25rem; }
 .field input, .field select {
   width: 100%;
   font: inherit;
-  padding: 0.5rem 0.625rem;
+  min-block-size: var(--tap);
+  /* 16px: anything smaller and iOS Safari zooms the viewport on focus. */
+  font-size: 1rem;
+  padding: 0.55rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text);
+  transition: border-color var(--fast) var(--ease);
 }
+.field input:focus, .field select:focus { border-color: var(--accent); }
+.field input::placeholder { color: var(--text-muted); }
 
-.chips { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* Seven equal columns: a week is one row. As flex pills they wrapped 5 + 2,
+   which reads as two groups and hides Sat/Sun below the fold on a short form. */
+.chips.weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.25rem;
+}
+.chips.weekdays .chip { min-inline-size: 0; padding-inline: 0.15rem; font-size: 0.8125rem; }
+
+/* On a 320px screen seven columns leaves 38px each, under the target size.
+   Four then three keeps every chip comfortably tappable. */
+@media (max-width: 360px) {
+  .chips.weekdays { grid-template-columns: repeat(4, 1fr); }
+}
 .chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--tap);
+  min-inline-size: var(--tap);
   border: 1px solid var(--border);
   background: var(--surface);
-  color: var(--text-muted);
+  color: var(--text);
   border-radius: 999px;
-  padding: 0.35rem 0.7rem;
-  font-size: 0.8125rem;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.9375rem;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
 }
-.chip[aria-pressed='true'] { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+/* Selected state is a tint plus an accent border, not a saturated fill. Seven
+   solid pills in a row is a slab of colour, and the default routine is daily. */
+.chip[aria-pressed='true'] {
+  background: var(--accent-surface);
+  color: var(--accent);
+  border-color: var(--accent-border);
+  font-weight: 650;
+}
+
+/* Two mutually exclusive options: one control, not two loose pills. */
+.segmented {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.1875rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.segmented button {
+  flex: 1;
+  min-block-size: var(--tap);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.segmented button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 650;
+  box-shadow: var(--shadow);
+}
 
 .banner { border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.875rem; }
 .banner-error { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
 .banner-info { background: var(--surface-alt); color: var(--text-muted); }
 
 .empty { text-align: center; color: var(--text-muted); padding: 2.5rem 1rem; }
-.actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.actions { display: flex; gap: 0.5rem; align-items: center; }
+
+/* A form's primary action should not be the last thing after eight fields and
+   below the tab bar. It rides above the nav instead. */
+.form-actions {
+  position: sticky;
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom));
+  display: flex;
+  gap: 0.5rem;
+  margin: 1.5rem -1rem 0;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+}
+.form-actions .btn { flex: 1; }
+.form-actions .btn-primary { flex: 2; }
+
+/* Grouped fields, so the editor reads as three decisions rather than eight. */
+.fieldset {
+  border: 0;
+  margin: 0 0 1.75rem;
+  padding: 0;
+}
+.fieldset > legend {
+  padding: 0;
+  margin-bottom: 0.75rem;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  color: var(--text);
+}
+.hint {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+/* A plain divided list. Rows of the same shape do not each need a card. */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.list > li + li { border-top: 1px solid var(--border); }
+.list > li { padding: 0.75rem 0.875rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

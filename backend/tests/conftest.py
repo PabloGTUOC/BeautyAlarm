@@ -8,6 +8,12 @@ _TMPDIR = tempfile.mkdtemp(prefix="beautyalarm-tests-")
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMPDIR}/app.db"
 os.environ["APP_TIMEZONE"] = "UTC"
 os.environ["API_TOKEN"] = ""
+# Cleared, not merely unset: running the suite inside the api container would
+# otherwise inherit the deployment's real VAPID pair from .env, which makes
+# "unconfigured" tests see a configured app and starts the scheduler against a
+# database the fixtures never created.
+os.environ["VAPID_PUBLIC_KEY"] = ""
+os.environ["VAPID_PRIVATE_KEY"] = ""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,13 +70,50 @@ def product(client):
     return response.json()
 
 
-def make_routine(client, product_id, **overrides):
+def make_routine(client, product_id=None, **overrides):
+    """Create a scheduled routine. ``product_id`` is a convenience for the common
+    one-product case; pass ``product_ids=[...]`` for an ordered multi-product one,
+    or neither for a routine with no products."""
     payload = {
-        "product_id": product_id,
+        "name": "Nightly retinol",
         "days_of_week": [1, 2, 3, 4, 5, 6, 7],
         "time_period": "night",
+        "product_ids": [product_id] if product_id is not None else [],
     }
     payload.update(overrides)
     response = client.post("/routines/", json=payload)
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def make_tracked(client, **overrides):
+    """Create a tracked routine (D11), e.g. a haircut."""
+    payload = {
+        "name": "Haircut",
+        "kind": "tracked",
+        "target_interval_days": 35,
+        "product_ids": [],
+    }
+    payload.update(overrides)
+    response = client.post("/routines/", json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def routine_model(**overrides):
+    """A detached Routine for unit-testing the pure service functions."""
+    from app.models import Routine, RoutineKind
+
+    fields = {
+        "id": 1,
+        "name": "Routine",
+        "kind": RoutineKind.scheduled,
+        "days_of_week": [1, 2, 3, 4, 5, 6, 7],
+        "time_period": None,
+        "target_interval_days": None,
+        "start_date": None,
+        "end_date": None,
+        "is_active": True,
+    }
+    fields.update(overrides)
+    return Routine(**fields)
